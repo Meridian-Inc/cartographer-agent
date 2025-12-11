@@ -1,88 +1,81 @@
 ; Cartographer Agent NSIS Installer Hooks
 ; Handles Npcap installation as a prerequisite for network scanning
+; Compatible with Tauri 2.0 NSIS bundler
 
 !include "LogicLib.nsh"
+!include "x64.nsh"
 
-Var NpcapInstalled
-
-; Check if Npcap or WinPcap is already installed
-!macro _CheckNpcapInstalled
-    StrCpy $NpcapInstalled "false"
+; Custom install macro - called during installation
+!macro customInstall
+    ; Check if Npcap or WinPcap is already installed
+    StrCpy $0 ""
     
-    ; Check for Npcap in registry
+    ; Check for Npcap in registry (64-bit)
+    ${If} ${RunningX64}
+        SetRegView 64
+    ${EndIf}
+    
     ClearErrors
     ReadRegStr $0 HKLM "SOFTWARE\Npcap" ""
-    ${IfNot} ${Errors}
-        ${If} $0 != ""
-            StrCpy $NpcapInstalled "true"
-        ${EndIf}
-    ${EndIf}
     
-    ; Also check for WinPcap as fallback
-    ${If} $NpcapInstalled == "false"
+    ${If} $0 == ""
+        ; Npcap not found, check for WinPcap
         ClearErrors
         ReadRegStr $0 HKLM "SOFTWARE\WinPcap" ""
-        ${IfNot} ${Errors}
-            ${If} $0 != ""
-                StrCpy $NpcapInstalled "true"
-            ${EndIf}
-        ${EndIf}
     ${EndIf}
-!macroend
-
-; Called before the install section
-!macro NSIS_HOOK_PREINSTALL
-    !insertmacro _CheckNpcapInstalled
     
-    ${If} $NpcapInstalled == "false"
+    ; Reset registry view
+    ${If} ${RunningX64}
+        SetRegView 32
+    ${EndIf}
+    
+    ${If} $0 == ""
+        ; Neither Npcap nor WinPcap is installed
         MessageBox MB_YESNO|MB_ICONQUESTION \
             "Cartographer Agent requires Npcap for network scanning.$\r$\n$\r$\n\
-            Npcap is not currently installed on your system.$\r$\n$\r$\n\
-            Would you like to install Npcap now?$\r$\n$\r$\n\
-            (Npcap is free for personal use)" \
-            IDYES npcap_install IDNO npcap_skip
+Npcap is not currently installed on your system.$\r$\n$\r$\n\
+Would you like to install Npcap now?$\r$\n$\r$\n\
+(Npcap is free for personal use)" \
+            IDYES InstallNpcap IDNO SkipNpcap
         
-        npcap_install:
-            DetailPrint "Extracting Npcap installer..."
-            
-            ; Extract Npcap installer to temp directory
-            ; Path is relative to the generated NSIS script in target/release/nsis/x64/
-            SetOutPath $PLUGINSDIR
-            File "..\..\..\..\nsis\npcap-installer.exe"
-            
+        InstallNpcap:
             DetailPrint "Installing Npcap..."
             
-            ; Run Npcap installer with WinPcap API compatibility mode
-            ExecWait '"$PLUGINSDIR\npcap-installer.exe" /winpcap_mode=yes' $0
+            ; Extract Npcap installer to temp directory
+            SetOutPath $PLUGINSDIR
+            ; Path relative to generated script in target/release/nsis/x64/
+            File "..\..\..\..\nsis\npcap-installer.exe"
             
-            ${If} $0 == "0"
-                DetailPrint "Npcap installed successfully"
-            ${Else}
-                DetailPrint "Npcap installation completed with code: $0"
+            ; Run Npcap installer - user will see the Npcap installer UI
+            ExecWait '"$PLUGINSDIR\npcap-installer.exe"' $1
+            
+            DetailPrint "Npcap installer exited with code: $1"
+            
+            ${If} $1 != 0
                 MessageBox MB_OK|MB_ICONINFORMATION \
-                    "Npcap installation may require a system restart.$\r$\n$\r$\n\
-                    If network scanning doesn't work after installation,$\r$\n\
-                    please restart your computer."
+                    "Npcap installation may require a restart.$\r$\n$\r$\n\
+If network scanning doesn't work, please restart your computer."
             ${EndIf}
             
             ; Clean up
             Delete "$PLUGINSDIR\npcap-installer.exe"
             
-            Goto npcap_done
+            Goto NpcapDone
         
-        npcap_skip:
+        SkipNpcap:
             MessageBox MB_OK|MB_ICONINFORMATION \
                 "Cartographer Agent will be installed without Npcap.$\r$\n$\r$\n\
-                Network scanning features will not work until Npcap is installed.$\r$\n$\r$\n\
-                You can download Npcap later from: https://npcap.com"
+Network scanning features will not work until Npcap is installed.$\r$\n$\r$\n\
+You can download Npcap later from: https://npcap.com"
         
-        npcap_done:
+        NpcapDone:
     ${Else}
         DetailPrint "Npcap/WinPcap is already installed"
     ${EndIf}
 !macroend
 
-; Called after the install section
-!macro NSIS_HOOK_POSTINSTALL
-    ; Installation complete - nothing special needed
+; Custom uninstall macro - called during uninstallation
+!macro customUninstall
+    ; Nothing special needed during uninstall
+    ; We don't uninstall Npcap as other apps might need it
 !macroend

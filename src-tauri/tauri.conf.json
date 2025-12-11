@@ -45,7 +45,7 @@
     "longDescription": "Monitor your local network and sync device information with Cartographer Cloud",
     "windows": {
       "nsis": {
-        "installerHooks": "nsis/installer-hooks.nsi"
+        "installerHooks": ["./nsis/installer-hooks.nsi"]
       }
     }
   },

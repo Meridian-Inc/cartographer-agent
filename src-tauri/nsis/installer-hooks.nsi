@@ -43,8 +43,19 @@ Would you like to install Npcap now?$\r$\n$\r$\n\
             
             ; Extract Npcap installer to temp directory
             SetOutPath $PLUGINSDIR
-            ; Path relative to generated script in target/release/nsis/x64/
-            File "..\..\..\..\nsis\npcap-installer.exe"
+            ; Path from target/release/nsis/x64/ back to src-tauri/nsis/
+            File /nonfatal "..\..\..\..\nsis\npcap-installer.exe"
+            
+            ; Check if file was extracted
+            IfFileExists "$PLUGINSDIR\npcap-installer.exe" RunNpcapInstaller NpcapNotBundled
+            
+            NpcapNotBundled:
+                MessageBox MB_OK|MB_ICONINFORMATION \
+                    "Npcap installer was not bundled with this release.$\r$\n$\r$\n\
+Please download and install Npcap manually from: https://npcap.com"
+                Goto NpcapDone
+            
+            RunNpcapInstaller:
             
             ; Run Npcap installer - user will see the Npcap installer UI
             ExecWait '"$PLUGINSDIR\npcap-installer.exe"' $1

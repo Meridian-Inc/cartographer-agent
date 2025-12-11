@@ -68,8 +68,13 @@ jobs:
           
           Write-Host "Downloading Npcap installer from: $npcapUrl"
           
-          # Place in the nsis directory so the NSIS script can find it
+          # Place in src-tauri/nsis directory alongside the hook script
           Invoke-WebRequest -Uri $npcapUrl -OutFile "src-tauri/nsis/npcap-installer.exe"
+          
+          # Set environment variable with absolute path for NSIS
+          $absolutePath = (Resolve-Path "src-tauri/nsis/npcap-installer.exe").Path
+          Write-Host "Npcap installer absolute path: $absolutePath"
+          echo "NPCAP_INSTALLER_PATH=$absolutePath" >> $env:GITHUB_ENV
           
           # Verify download
           if (Test-Path "src-tauri/nsis/npcap-installer.exe") {

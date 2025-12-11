@@ -1,6 +1,6 @@
 use crate::auth::{check_auth, start_login, logout as auth_logout};
 use crate::cloud::CloudClient;
-use crate::scanner::{scan_network as scanner_scan_network, Device};
+use crate::scanner::{scan_network as scanner_scan_network, Device, check_npcap_installed, get_npcap_error_message};
 use crate::scheduler::{set_scan_interval as scheduler_set_scan_interval, get_scan_interval};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -130,5 +130,29 @@ pub async fn set_notifications_enabled(_enabled: bool) -> Result<(), String> {
 pub async fn get_notifications_enabled() -> Result<bool, String> {
     // Read from config file
     Ok(true)
+}
+
+#[derive(Debug, Serialize)]
+pub struct NpcapStatus {
+    pub installed: bool,
+    pub message: Option<String>,
+}
+
+#[tauri::command]
+pub fn check_npcap_status() -> NpcapStatus {
+    match check_npcap_installed() {
+        Ok(true) => NpcapStatus {
+            installed: true,
+            message: None,
+        },
+        Ok(false) => NpcapStatus {
+            installed: false,
+            message: Some(get_npcap_error_message().to_string()),
+        },
+        Err(e) => NpcapStatus {
+            installed: false,
+            message: Some(format!("Failed to check Npcap status: {}", e)),
+        },
+    }
 }
 

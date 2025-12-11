@@ -15,8 +15,19 @@ A standalone desktop application that monitors your local network and syncs devi
 ### Prerequisites
 
 - **Windows**: Windows 10 or later
+  - **Npcap** (for network scanning) - automatically installed with the agent
 - **macOS**: macOS 10.15 or later
 - **Linux**: Most modern distributions with system tray support
+  - `libpcap` must be installed (`sudo apt install libpcap-dev` on Debian/Ubuntu)
+
+### Windows: Npcap Dependency
+
+Cartographer Agent uses Npcap for network scanning on Windows. The installer will automatically prompt you to install Npcap if it's not already present.
+
+If you need to install Npcap manually:
+1. Download from [npcap.com](https://npcap.com/dist/)
+2. During installation, check **"Install Npcap in WinPcap API-compatible Mode"**
+3. Restart Cartographer Agent
 
 ### Download
 
@@ -131,8 +142,13 @@ The agent requires network access to:
 ### "Failed to scan network"
 
 - Ensure you're connected to a network
+- **Windows**: Make sure Npcap is installed (see Prerequisites above)
 - On Linux/macOS, ARP scanning may require root privileges
 - Try running with elevated permissions if needed
+
+### "packet.dll was not found" (Windows)
+
+This error means Npcap is not installed. Install it from [npcap.com](https://npcap.com/dist/) and ensure you check "Install Npcap in WinPcap API-compatible Mode" during installation.
 
 ### "Authentication failed"
 

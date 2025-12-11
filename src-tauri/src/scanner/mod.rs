@@ -13,7 +13,62 @@ pub struct Device {
     pub hostname: Option<String>,
 }
 
+/// Check if Npcap (or WinPcap) is installed on Windows
+/// Returns Ok(true) if installed, Ok(false) if not, or an error if check failed
+#[cfg(target_os = "windows")]
+pub fn check_npcap_installed() -> Result<bool> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    
+    // Check for Npcap
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    if hklm.open_subkey("SOFTWARE\\Npcap").is_ok() {
+        return Ok(true);
+    }
+    
+    // Check for WinPcap as fallback
+    if hklm.open_subkey("SOFTWARE\\WinPcap").is_ok() {
+        return Ok(true);
+    }
+    
+    Ok(false)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn check_npcap_installed() -> Result<bool> {
+    // On non-Windows platforms, libpcap is typically installed system-wide
+    // or bundled with the app. Return true as a default.
+    Ok(true)
+}
+
+/// Get a user-friendly error message if Npcap is not installed
+pub fn get_npcap_error_message() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "Network scanning requires Npcap to be installed.\n\n\
+         Please download and install Npcap from:\n\
+         https://npcap.com/dist/\n\n\
+         During installation, make sure to check:\n\
+         'Install Npcap in WinPcap API-compatible Mode'"
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "Network scanning requires libpcap to be installed.\n\n\
+         Please install it using your package manager:\n\
+         - Ubuntu/Debian: sudo apt install libpcap-dev\n\
+         - Fedora: sudo dnf install libpcap-devel\n\
+         - macOS: brew install libpcap"
+    }
+}
+
 pub async fn scan_network() -> Result<Vec<Device>> {
+    // Check if packet capture library is available
+    #[cfg(target_os = "windows")]
+    {
+        if !check_npcap_installed().unwrap_or(false) {
+            return Err(anyhow::anyhow!(get_npcap_error_message()));
+        }
+    }
     // Get network interface and subnet
     let (interface, subnet) = get_network_info_internal().await?;
     

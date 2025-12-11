@@ -51,11 +51,34 @@ jobs:
       - name: Install Npcap SDK (Windows only)
         if: matrix.platform == 'windows-latest'
         run: |
-          # Download and extract Npcap SDK
+          # Download and extract Npcap SDK for compilation
           Invoke-WebRequest -Uri "https://npcap.com/dist/npcap-sdk-1.13.zip" -OutFile "npcap-sdk.zip"
           Expand-Archive -Path "npcap-sdk.zip" -DestinationPath "npcap-sdk"
           # Set environment variable for the linker
           echo "LIB=$env:GITHUB_WORKSPACE\npcap-sdk\Lib\x64" >> $env:GITHUB_ENV
+        shell: pwsh
+
+      - name: Download Npcap Installer for bundling (Windows only)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          # Download Npcap installer (latest stable version)
+          # Note: Using version 1.79 - update as needed
+          $npcapVersion = "1.79"
+          $npcapUrl = "https://npcap.com/dist/npcap-$npcapVersion.exe"
+          
+          Write-Host "Downloading Npcap installer from: $npcapUrl"
+          
+          # Place in the nsis directory so the NSIS script can find it
+          Invoke-WebRequest -Uri $npcapUrl -OutFile "src-tauri/nsis/npcap-installer.exe"
+          
+          # Verify download
+          if (Test-Path "src-tauri/nsis/npcap-installer.exe") {
+            $fileSize = (Get-Item "src-tauri/nsis/npcap-installer.exe").Length
+            Write-Host "Npcap installer downloaded successfully. Size: $fileSize bytes"
+          } else {
+            Write-Error "Failed to download Npcap installer"
+            exit 1
+          }
         shell: pwsh
 
       - name: Setup Node.js

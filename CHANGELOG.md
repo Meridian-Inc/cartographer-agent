@@ -5,6 +5,20 @@ All notable changes to Cartographer Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.1.0 (2025-12-11)
+
+
+### 🐛 Bug Fixes
+
+* add icon to bundle configurations ([4e48dfc](https://github.com/Meridian-Inc/cartographer-agent/commit/4e48dfcec89e73726702b95e91261addee943bf3))
+* correct rust-toolchain action usage ([480028b](https://github.com/Meridian-Inc/cartographer-agent/commit/480028baaeb550cc888f98eb76feea0ffd32ee25))
+* generate icons for all platforms ([650082d](https://github.com/Meridian-Inc/cartographer-agent/commit/650082d19930baf42582a981a6de83a82f1671ee))
+
+
+### ✨ Features
+
+* add semantic versioning automatic release ([98e79d6](https://github.com/Meridian-Inc/cartographer-agent/commit/98e79d62e30639673cac89d7037dd68801e5cd3f))
+
 ### [0.1.0] - Initial Release
 
 #### ✨ Features

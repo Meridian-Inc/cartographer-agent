@@ -3,13 +3,24 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Cartographer Agent - Network monitoring desktop application",
+  "private": true,
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "npx @tauri-apps/cli",
     "tauri:dev": "npx @tauri-apps/cli dev",
-    "tauri:build": "npx @tauri-apps/cli build"
+    "tauri:build": "npx @tauri-apps/cli build",
+    "prepare": "husky",
+    "commit": "cz",
+    "commit:no-release": "SKIP_AUTO_RELEASE=1 git commit",
+    "release": "standard-version",
+    "release:minor": "standard-version --release-as minor",
+    "release:major": "standard-version --release-as major",
+    "release:patch": "standard-version --release-as patch",
+    "release:dry-run": "standard-version --dry-run",
+    "release:first": "standard-version --first-release",
+    "push:release": "git push --follow-tags origin main"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
@@ -20,13 +31,29 @@
     "vue-router": "^4.2.5"
   },
   "devDependencies": {
+    "@commitlint/cli": "^19.6.0",
+    "@commitlint/config-conventional": "^19.6.0",
     "@tauri-apps/cli": "^2.0.0",
     "@vitejs/plugin-vue": "^5.0.3",
     "autoprefixer": "^10.4.16",
+    "commitizen": "^4.3.1",
+    "cz-conventional-changelog": "^3.3.0",
+    "husky": "^9.1.7",
     "postcss": "^8.4.32",
+    "standard-version": "^9.5.0",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.3",
     "vite": "^5.0.11"
-  }
+  },
+  "config": {
+    "commitizen": {
+      "path": "./node_modules/cz-conventional-changelog"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Meridian-Inc/cartographer-agent.git"
+  },
+  "license": "MIT"
 }
 

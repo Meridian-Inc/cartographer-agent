@@ -4,12 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (e.g., v1.0.0)'
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -71,13 +65,68 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.event.inputs.version || github.ref_name }}
-          releaseName: 'Cartographer Agent ${{ github.event.inputs.version || github.ref_name }}'
-          releaseBody: |
-            Download the appropriate installer for your platform:
-            - **Windows**: `.msi` or `.exe` installer
-            - **macOS**: `.dmg` disk image
-            - **Linux**: `.AppImage` or `.deb` package
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Cartographer Agent ${{ github.ref_name }}'
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  # Finalize release with changelog
+  finalize-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          
+          echo "Extracting changelog for version: $VERSION"
+          
+          # Find the line number of this version's header
+          START_LINE=$(grep -n "^### \[$VERSION\]" CHANGELOG.md | head -1 | cut -d: -f1)
+          
+          if [ -z "$START_LINE" ]; then
+            echo "Version header not found, using default message"
+            echo "Release v$VERSION" > release_notes.md
+            exit 0
+          fi
+          
+          echo "Found version header at line: $START_LINE"
+          
+          # Find the next version header after this one
+          END_LINE=$(tail -n +$((START_LINE + 1)) CHANGELOG.md | grep -n "^### \[" | head -1 | cut -d: -f1)
+          
+          if [ -z "$END_LINE" ]; then
+            # No next version found, extract to end of file
+            echo "No next version found, extracting to end of file"
+            sed -n "${START_LINE},\$p" CHANGELOG.md > release_notes.md
+          else
+            # Calculate actual end line number
+            ACTUAL_END=$((START_LINE + END_LINE - 1))
+            echo "Next version header at line: $ACTUAL_END"
+            sed -n "${START_LINE},$((ACTUAL_END - 1))p" CHANGELOG.md > release_notes.md
+          fi
+          
+          echo "--- Extracted changelog content ---"
+          cat release_notes.md
+          echo "--- End of changelog content ---"
+
+      - name: Update release with changelog
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Cartographer Agent v${{ steps.version.outputs.VERSION }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

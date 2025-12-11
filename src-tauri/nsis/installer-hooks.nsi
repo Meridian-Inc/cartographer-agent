@@ -46,8 +46,9 @@ Var NpcapInstalled
             DetailPrint "Extracting Npcap installer..."
             
             ; Extract Npcap installer to temp directory
+            ; Path is relative to the generated NSIS script in target/release/nsis/x64/
             SetOutPath $PLUGINSDIR
-            File "npcap-installer.exe"
+            File "..\..\..\..\nsis\npcap-installer.exe"
             
             DetailPrint "Installing Npcap..."
             

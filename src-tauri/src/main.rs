@@ -65,7 +65,6 @@ fn main() {
             commands::get_start_at_login,
             commands::set_notifications_enabled,
             commands::get_notifications_enabled,
-            commands::check_npcap_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

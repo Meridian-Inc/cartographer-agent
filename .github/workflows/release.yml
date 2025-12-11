@@ -46,45 +46,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libpcap-dev
-
-      - name: Install Npcap SDK (Windows only)
-        if: matrix.platform == 'windows-latest'
-        run: |
-          # Download and extract Npcap SDK for compilation
-          Invoke-WebRequest -Uri "https://npcap.com/dist/npcap-sdk-1.13.zip" -OutFile "npcap-sdk.zip"
-          Expand-Archive -Path "npcap-sdk.zip" -DestinationPath "npcap-sdk"
-          # Set environment variable for the linker
-          echo "LIB=$env:GITHUB_WORKSPACE\npcap-sdk\Lib\x64" >> $env:GITHUB_ENV
-        shell: pwsh
-
-      - name: Download Npcap Installer for bundling (Windows only)
-        if: matrix.platform == 'windows-latest'
-        run: |
-          # Download Npcap installer (latest stable version)
-          # Note: Using version 1.79 - update as needed
-          $npcapVersion = "1.79"
-          $npcapUrl = "https://npcap.com/dist/npcap-$npcapVersion.exe"
-          
-          Write-Host "Downloading Npcap installer from: $npcapUrl"
-          
-          # Place in src-tauri/nsis directory alongside the hook script
-          Invoke-WebRequest -Uri $npcapUrl -OutFile "src-tauri/nsis/npcap-installer.exe"
-          
-          # Set environment variable with absolute path for NSIS
-          $absolutePath = (Resolve-Path "src-tauri/nsis/npcap-installer.exe").Path
-          Write-Host "Npcap installer absolute path: $absolutePath"
-          echo "NPCAP_INSTALLER_PATH=$absolutePath" >> $env:GITHUB_ENV
-          
-          # Verify download
-          if (Test-Path "src-tauri/nsis/npcap-installer.exe") {
-            $fileSize = (Get-Item "src-tauri/nsis/npcap-installer.exe").Length
-            Write-Host "Npcap installer downloaded successfully. Size: $fileSize bytes"
-          } else {
-            Write-Error "Failed to download Npcap installer"
-            exit 1
-          }
-        shell: pwsh
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

@@ -3,7 +3,6 @@ mod ping;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::net::IpAddr;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
@@ -13,94 +12,46 @@ pub struct Device {
     pub hostname: Option<String>,
 }
 
-/// Check if Npcap (or WinPcap) is installed on Windows
-/// Returns Ok(true) if installed, Ok(false) if not, or an error if check failed
-#[cfg(target_os = "windows")]
-pub fn check_npcap_installed() -> Result<bool> {
-    use winreg::enums::*;
-    use winreg::RegKey;
-    
-    // Check for Npcap
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    if hklm.open_subkey("SOFTWARE\\Npcap").is_ok() {
-        return Ok(true);
-    }
-    
-    // Check for WinPcap as fallback
-    if hklm.open_subkey("SOFTWARE\\WinPcap").is_ok() {
-        return Ok(true);
-    }
-    
-    Ok(false)
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn check_npcap_installed() -> Result<bool> {
-    // On non-Windows platforms, libpcap is typically installed system-wide
-    // or bundled with the app. Return true as a default.
-    Ok(true)
-}
-
-/// Get a user-friendly error message if Npcap is not installed
-pub fn get_npcap_error_message() -> &'static str {
-    #[cfg(target_os = "windows")]
-    {
-        "Network scanning requires Npcap to be installed.\n\n\
-         Please download and install Npcap from:\n\
-         https://npcap.com/dist/\n\n\
-         During installation, make sure to check:\n\
-         'Install Npcap in WinPcap API-compatible Mode'"
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        "Network scanning requires libpcap to be installed.\n\n\
-         Please install it using your package manager:\n\
-         - Ubuntu/Debian: sudo apt install libpcap-dev\n\
-         - Fedora: sudo dnf install libpcap-devel\n\
-         - macOS: brew install libpcap"
-    }
-}
-
 pub async fn scan_network() -> Result<Vec<Device>> {
-    // Check if packet capture library is available
-    #[cfg(target_os = "windows")]
-    {
-        if !check_npcap_installed().unwrap_or(false) {
-            return Err(anyhow::anyhow!(get_npcap_error_message()));
-        }
-    }
     // Get network interface and subnet
-    let (interface, subnet) = get_network_info_internal().await?;
+    let (_interface, subnet) = get_network_info_internal().await?;
     
-    tracing::info!("Scanning network: {} on interface {}", subnet, interface);
+    tracing::info!("Scanning network: {}", subnet);
     
-    // Try ARP scan first (faster, more accurate)
-    let devices = match arp::scan_subnet(&interface, &subnet).await {
-        Ok(devices) => {
-            tracing::info!("ARP scan found {} devices", devices.len());
-            devices
+    // First, get devices from the ARP table (already known devices)
+    let mut devices = arp::get_arp_table().await.unwrap_or_default();
+    tracing::info!("ARP table has {} entries", devices.len());
+    
+    // Then do a ping sweep to discover new devices
+    match ping::ping_sweep(&subnet).await {
+        Ok(pinged_devices) => {
+            tracing::info!("Ping sweep found {} responding hosts", pinged_devices.len());
+            
+            // Merge ping results with ARP data
+            for pinged in pinged_devices {
+                // Check if we already have this IP from ARP
+                if let Some(existing) = devices.iter_mut().find(|d| d.ip == pinged.ip) {
+                    // Update with ping response time
+                    existing.response_time_ms = pinged.response_time_ms;
+                } else {
+                    // Add new device from ping
+                    devices.push(pinged);
+                }
+            }
         }
         Err(e) => {
-            tracing::warn!("ARP scan failed: {}, falling back to ping sweep", e);
-            // Fall back to ping sweep
-            ping::ping_sweep(&subnet).await
-                .context("Ping sweep failed")?
+            tracing::warn!("Ping sweep failed: {}", e);
         }
-    };
-    
-    // Resolve hostnames for discovered devices
-    let mut devices_with_hostnames = Vec::new();
-    for device in devices {
-        let hostname = resolve_hostname(&device.ip).await;
-        devices_with_hostnames.push(Device {
-            ip: device.ip,
-            mac: device.mac,
-            response_time_ms: device.response_time_ms,
-            hostname,
-        });
     }
     
-    Ok(devices_with_hostnames)
+    // Try to resolve hostnames
+    for device in &mut devices {
+        if device.hostname.is_none() {
+            device.hostname = resolve_hostname(&device.ip).await;
+        }
+    }
+    
+    Ok(devices)
 }
 
 pub async fn get_network_info() -> Result<String> {
@@ -109,53 +60,19 @@ pub async fn get_network_info() -> Result<String> {
 }
 
 async fn get_network_info_internal() -> Result<(String, String)> {
-    // Detect primary network interface and subnet
-    // This is a simplified version - in production, use pnet to detect properly
+    #[cfg(target_os = "windows")]
+    {
+        get_windows_network_info().await
+    }
     
     #[cfg(target_os = "linux")]
     {
-        use std::process::Command;
-        let output = Command::new("ip")
-            .args(&["route", "show", "default"])
-            .output()
-            .context("Failed to run ip command")?;
-        
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        // Parse interface from output
-        // This is simplified - real implementation would parse properly
-        let interface = "eth0".to_string(); // Placeholder
-        let subnet = "192.168.1.0/24".to_string(); // Placeholder
-        
-        Ok((interface, subnet))
+        get_linux_network_info().await
     }
     
     #[cfg(target_os = "macos")]
     {
-        use std::process::Command;
-        let output = Command::new("route")
-            .args(&["-n", "get", "default"])
-            .output()
-            .context("Failed to run route command")?;
-        
-        // Parse output to get interface and subnet
-        let interface = "en0".to_string(); // Placeholder
-        let subnet = "192.168.1.0/24".to_string(); // Placeholder
-        
-        Ok((interface, subnet))
-    }
-    
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-        let output = Command::new("ipconfig")
-            .output()
-            .context("Failed to run ipconfig command")?;
-        
-        // Parse output to get interface and subnet
-        let interface = "Ethernet".to_string(); // Placeholder
-        let subnet = "192.168.1.0/24".to_string(); // Placeholder
-        
-        Ok((interface, subnet))
+        get_macos_network_info().await
     }
     
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -164,16 +81,173 @@ async fn get_network_info_internal() -> Result<(String, String)> {
     }
 }
 
-async fn resolve_hostname(ip: &str) -> Option<String> {
-    use std::net::ToSocketAddrs;
+#[cfg(target_os = "windows")]
+async fn get_windows_network_info() -> Result<(String, String)> {
+    use std::process::Command;
     
-    // Try reverse DNS lookup
-    if let Ok(addr) = ip.parse::<IpAddr>() {
-        if let Ok(mut iter) = (addr, 0).to_socket_addrs() {
-            if let Some(addr) = iter.next() {
-                if let Ok(hostname) = addr.ip().to_string().parse::<std::net::IpAddr>() {
-                    // This is a placeholder - real implementation would do proper reverse DNS
-                    return None;
+    // Get default gateway and interface using route print
+    let output = Command::new("powershell")
+        .args(["-Command", r#"
+            $adapter = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null } | Select-Object -First 1
+            if ($adapter) {
+                $ip = $adapter.IPv4Address.IPAddress
+                $prefix = $adapter.IPv4Address.PrefixLength
+                $iface = $adapter.InterfaceAlias
+                # Calculate network address
+                $ipBytes = [System.Net.IPAddress]::Parse($ip).GetAddressBytes()
+                $maskInt = [uint32](0xFFFFFFFF -shl (32 - $prefix))
+                $maskBytes = [BitConverter]::GetBytes($maskInt)
+                [Array]::Reverse($maskBytes)
+                $networkBytes = @()
+                for ($i = 0; $i -lt 4; $i++) {
+                    $networkBytes += $ipBytes[$i] -band $maskBytes[$i]
+                }
+                $network = [System.Net.IPAddress]::new($networkBytes)
+                Write-Output "$iface|$network/$prefix"
+            }
+        "#])
+        .output()
+        .context("Failed to run PowerShell command")?;
+    
+    let output_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    
+    if output_str.contains('|') {
+        let parts: Vec<&str> = output_str.split('|').collect();
+        if parts.len() == 2 {
+            return Ok((parts[0].to_string(), parts[1].to_string()));
+        }
+    }
+    
+    // Fallback to common defaults
+    Ok(("Ethernet".to_string(), "192.168.1.0/24".to_string()))
+}
+
+#[cfg(target_os = "linux")]
+async fn get_linux_network_info() -> Result<(String, String)> {
+    use std::process::Command;
+    
+    // Get default interface
+    let route_output = Command::new("ip")
+        .args(["route", "show", "default"])
+        .output()
+        .context("Failed to run ip route command")?;
+    
+    let route_str = String::from_utf8_lossy(&route_output.stdout);
+    let interface = route_str
+        .split_whitespace()
+        .skip_while(|&s| s != "dev")
+        .nth(1)
+        .unwrap_or("eth0")
+        .to_string();
+    
+    // Get IP and subnet for the interface
+    let addr_output = Command::new("ip")
+        .args(["addr", "show", &interface])
+        .output()
+        .context("Failed to run ip addr command")?;
+    
+    let addr_str = String::from_utf8_lossy(&addr_output.stdout);
+    
+    // Parse inet line to get IP/prefix
+    for line in addr_str.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("inet ") && !trimmed.contains("127.0.0.1") {
+            if let Some(cidr) = trimmed.split_whitespace().nth(1) {
+                // Convert IP/prefix to network/prefix
+                if let Ok(network) = cidr.parse::<ipnetwork::IpNetwork>() {
+                    let subnet = format!("{}/{}", network.network(), network.prefix());
+                    return Ok((interface, subnet));
+                }
+            }
+        }
+    }
+    
+    Ok((interface, "192.168.1.0/24".to_string()))
+}
+
+#[cfg(target_os = "macos")]
+async fn get_macos_network_info() -> Result<(String, String)> {
+    use std::process::Command;
+    
+    // Get default interface
+    let route_output = Command::new("route")
+        .args(["-n", "get", "default"])
+        .output()
+        .context("Failed to run route command")?;
+    
+    let route_str = String::from_utf8_lossy(&route_output.stdout);
+    let interface = route_str
+        .lines()
+        .find(|line| line.contains("interface:"))
+        .and_then(|line| line.split(':').nth(1))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "en0".to_string());
+    
+    // Get IP and subnet for the interface
+    let ifconfig_output = Command::new("ifconfig")
+        .arg(&interface)
+        .output()
+        .context("Failed to run ifconfig command")?;
+    
+    let ifconfig_str = String::from_utf8_lossy(&ifconfig_output.stdout);
+    
+    // Parse inet line
+    for line in ifconfig_str.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("inet ") && !trimmed.contains("127.0.0.1") {
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if let (Some(ip), Some(mask)) = (parts.get(1), parts.get(3)) {
+                // Convert hex mask to prefix length
+                if let Ok(mask_int) = u32::from_str_radix(mask.trim_start_matches("0x"), 16) {
+                    let prefix = mask_int.count_ones();
+                    let ip_addr: std::net::Ipv4Addr = ip.parse().unwrap_or([192,168,1,1].into());
+                    let mask_addr = std::net::Ipv4Addr::from(mask_int);
+                    let network_int = u32::from(ip_addr) & u32::from(mask_addr);
+                    let network = std::net::Ipv4Addr::from(network_int);
+                    return Ok((interface, format!("{}/{}", network, prefix)));
+                }
+            }
+        }
+    }
+    
+    Ok((interface, "192.168.1.0/24".to_string()))
+}
+
+async fn resolve_hostname(ip: &str) -> Option<String> {
+    use std::process::Command;
+    
+    #[cfg(target_os = "windows")]
+    {
+        // Use nbtstat for NetBIOS name resolution
+        let output = Command::new("nbtstat")
+            .args(["-A", ip])
+            .output()
+            .ok()?;
+        
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        for line in output_str.lines() {
+            let trimmed = line.trim();
+            if trimmed.contains("<00>") && trimmed.contains("UNIQUE") {
+                return trimmed.split_whitespace().next().map(|s| s.to_string());
+            }
+        }
+    }
+    
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        // Try reverse DNS lookup
+        let output = Command::new("host")
+            .arg(ip)
+            .output()
+            .ok()?;
+        
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            // Parse "X.X.X.X.in-addr.arpa domain name pointer hostname."
+            if let Some(hostname) = output_str.split("pointer").nth(1) {
+                let hostname = hostname.trim().trim_end_matches('.');
+                if !hostname.is_empty() {
+                    return Some(hostname.to_string());
                 }
             }
         }
@@ -181,4 +255,3 @@ async fn resolve_hostname(ip: &str) -> Option<String> {
     
     None
 }
-

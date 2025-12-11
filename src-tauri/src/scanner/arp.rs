@@ -1,70 +1,166 @@
-use crate::scanner::Device;
-use anyhow::{Context, Result};
-use pnet::datalink;
-use pnet::packet::arp::{ArpPacket, ArpOperations};
-use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
-use pnet::packet::Packet;
-use std::net::IpAddr;
-use std::time::Duration;
-use tokio::time::timeout;
+//! ARP table scanning using system commands
+//! No special drivers or libraries required
 
-pub async fn scan_subnet(interface_name: &str, subnet: &str) -> Result<Vec<Device>> {
-    // Parse subnet CIDR
-    let (network, prefix_len) = parse_subnet(subnet)?;
+use crate::scanner::Device;
+use anyhow::Result;
+use std::process::Command;
+
+/// Get devices from the system ARP table
+/// This returns devices that have already been seen on the network
+pub async fn get_arp_table() -> Result<Vec<Device>> {
+    #[cfg(target_os = "windows")]
+    {
+        get_arp_table_windows()
+    }
     
-    // Get network interface
-    let interfaces = datalink::interfaces();
-    let interface = interfaces
-        .iter()
-        .find(|iface| iface.name == interface_name)
-        .ok_or_else(|| anyhow::anyhow!("Interface {} not found", interface_name))?;
+    #[cfg(target_os = "linux")]
+    {
+        get_arp_table_linux()
+    }
     
-    // Generate list of IPs to scan
-    let ips = generate_ip_list(network, prefix_len)?;
+    #[cfg(target_os = "macos")]
+    {
+        get_arp_table_macos()
+    }
     
-    // Perform ARP scan
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_arp_table_windows() -> Result<Vec<Device>> {
+    let output = Command::new("arp")
+        .args(["-a"])
+        .output()?;
+    
+    let output_str = String::from_utf8_lossy(&output.stdout);
     let mut devices = Vec::new();
     
-    // Note: This is a simplified implementation
-    // Real ARP scanning requires raw socket access which needs elevated privileges
-    // For now, we'll use a hybrid approach: try ARP if possible, fall back to ping
+    for line in output_str.lines() {
+        let line = line.trim();
+        
+        // Skip empty lines and headers
+        if line.is_empty() || line.starts_with("Interface") || line.contains("Internet Address") {
+            continue;
+        }
+        
+        // Parse lines like: "192.168.1.1          00-11-22-33-44-55     dynamic"
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+            let ip = parts[0];
+            let mac = parts[1];
+            
+            // Validate IP format
+            if ip.parse::<std::net::IpAddr>().is_ok() {
+                // Skip multicast and broadcast addresses
+                if ip.starts_with("224.") || ip.starts_with("239.") || ip.ends_with(".255") {
+                    continue;
+                }
+                
+                // Validate MAC format (Windows uses dashes)
+                if mac.contains('-') && mac.len() == 17 {
+                    devices.push(Device {
+                        ip: ip.to_string(),
+                        mac: Some(mac.replace('-', ":")),
+                        response_time_ms: None,
+                        hostname: None,
+                    });
+                }
+            }
+        }
+    }
     
-    // Placeholder: In a real implementation, we would:
-    // 1. Create a raw socket
-    // 2. Send ARP requests for each IP
-    // 3. Capture ARP responses
-    // 4. Extract MAC addresses from responses
-    
-    // For now, return empty to trigger fallback to ping
     Ok(devices)
 }
 
-fn parse_subnet(subnet: &str) -> Result<(IpAddr, u8), anyhow::Error> {
-    let parts: Vec<&str> = subnet.split('/').collect();
-    if parts.len() != 2 {
-        return Err(anyhow::anyhow!("Invalid subnet format"));
+#[cfg(target_os = "linux")]
+fn get_arp_table_linux() -> Result<Vec<Device>> {
+    let output = Command::new("arp")
+        .args(["-n"])
+        .output()?;
+    
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let mut devices = Vec::new();
+    
+    for line in output_str.lines().skip(1) { // Skip header
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        
+        // Parse lines like: "192.168.1.1    ether   00:11:22:33:44:55   C   eth0"
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 {
+            let ip = parts[0];
+            let mac = parts[2];
+            
+            // Validate IP and MAC
+            if ip.parse::<std::net::IpAddr>().is_ok() && mac.contains(':') && mac.len() == 17 {
+                // Skip incomplete entries
+                if mac == "(incomplete)" || mac == "00:00:00:00:00:00" {
+                    continue;
+                }
+                
+                devices.push(Device {
+                    ip: ip.to_string(),
+                    mac: Some(mac.to_string()),
+                    response_time_ms: None,
+                    hostname: None,
+                });
+            }
+        }
     }
     
-    let ip: IpAddr = parts[0].parse()
-        .context("Invalid IP address")?;
-    let prefix_len: u8 = parts[1].parse()
-        .context("Invalid prefix length")?;
-    
-    Ok((ip, prefix_len))
+    Ok(devices)
 }
 
-fn generate_ip_list(network: IpAddr, prefix_len: u8) -> Result<Vec<IpAddr>> {
-    use ipnetwork::IpNetwork;
+#[cfg(target_os = "macos")]
+fn get_arp_table_macos() -> Result<Vec<Device>> {
+    let output = Command::new("arp")
+        .args(["-a", "-n"])
+        .output()?;
     
-    let network_str = format!("{}/{}", network, prefix_len);
-    let ip_net: IpNetwork = network_str.parse()
-        .context("Failed to parse network")?;
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let mut devices = Vec::new();
     
-    let mut ips = Vec::new();
-    for ip in ip_net.iter() {
-        ips.push(ip);
+    for line in output_str.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        
+        // Parse lines like: "? (192.168.1.1) at 00:11:22:33:44:55 on en0 ifscope [ethernet]"
+        if let Some(ip_start) = line.find('(') {
+            if let Some(ip_end) = line.find(')') {
+                let ip = &line[ip_start + 1..ip_end];
+                
+                if ip.parse::<std::net::IpAddr>().is_ok() {
+                    // Find MAC address after "at "
+                    if let Some(at_pos) = line.find(" at ") {
+                        let after_at = &line[at_pos + 4..];
+                        let mac = after_at.split_whitespace().next().unwrap_or("");
+                        
+                        // Validate MAC format
+                        if mac.contains(':') && (mac.len() == 17 || mac.len() == 14) {
+                            // Skip incomplete entries
+                            if mac == "(incomplete)" {
+                                continue;
+                            }
+                            
+                            devices.push(Device {
+                                ip: ip.to_string(),
+                                mac: Some(mac.to_string()),
+                                response_time_ms: None,
+                                hostname: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
     }
     
-    Ok(ips)
+    Ok(devices)
 }
-

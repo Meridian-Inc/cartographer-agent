@@ -27,6 +27,3 @@ dist-ssr
 src-tauri/target
 src-tauri/Cargo.lock
 
-# Downloaded during CI for bundling
-src-tauri/nsis/npcap-installer.exe
-

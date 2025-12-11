@@ -235,7 +235,7 @@ async fn resolve_hostname(ip: &str) -> Option<String> {
     
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        // Try reverse DNS lookup
+    // Try reverse DNS lookup
         let output = Command::new("host")
             .arg(ip)
             .output()

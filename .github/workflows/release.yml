@@ -70,6 +70,7 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+          includeUpdaterArtifacts: false
 
   # Finalize release with changelog
   finalize-release:

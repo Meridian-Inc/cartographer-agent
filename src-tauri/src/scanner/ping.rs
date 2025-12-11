@@ -28,17 +28,17 @@ pub async fn ping_sweep(subnet: &str) -> Result<Vec<Device>> {
         let mut batch_handles = Vec::new();
         
         for ip in batch {
-            let ip_str = ip.to_string();
-            let handle = tokio::spawn(async move {
+        let ip_str = ip.to_string();
+        let handle = tokio::spawn(async move {
                 ping_host(&ip_str).await
-            });
+        });
             batch_handles.push(handle);
-        }
-        
+    }
+    
         // Wait for this batch to complete
         for handle in batch_handles {
-            if let Ok(Ok(Some(device))) = handle.await {
-                devices.push(device);
+        if let Ok(Ok(Some(device))) = handle.await {
+            devices.push(device);
             }
         }
     }

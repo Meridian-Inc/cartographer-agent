@@ -13,7 +13,6 @@ pub async fn ping_sweep(subnet: &str) -> Result<Vec<Device>> {
         .context("Failed to parse subnet")?;
     
     let mut devices = Vec::new();
-    let mut handles = Vec::new();
     
     // Generate IP list (skip network and broadcast addresses)
     let ips: Vec<std::net::IpAddr> = ip_net.iter()

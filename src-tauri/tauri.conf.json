@@ -44,10 +44,6 @@
     "shortDescription": "Network monitoring agent for Cartographer Cloud",
     "longDescription": "Monitor your local network and sync device information with Cartographer Cloud",
     "linux": {
-      "targets": [
-        "deb",
-        "appimage"
-      ],
       "deb": {
         "depends": [
           "libwebkit2gtk-4.1-0",

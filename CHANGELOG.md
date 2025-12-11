@@ -5,6 +5,13 @@ All notable changes to Cartographer Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0](https://github.com/Meridian-Inc/cartographer-agent/compare/v1.1.7...v1.2.0) (2025-12-11)
+
+
+### ✨ Features
+
+* add agent icon ([f25027c](https://github.com/Meridian-Inc/cartographer-agent/commit/f25027c7df94b26bdb4731ae0b01b5f5bf68b9da))
+
 ### [1.1.7](https://github.com/Meridian-Inc/cartographer-agent/compare/v1.1.6...v1.1.7) (2025-12-11)
 
 

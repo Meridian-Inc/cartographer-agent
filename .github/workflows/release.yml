@@ -22,15 +22,19 @@ jobs:
         include:
           - platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
+            rust_targets: 'aarch64-apple-darwin'
             name: 'macOS-arm64'
           - platform: 'macos-latest'
             args: '--target x86_64-apple-darwin'
+            rust_targets: 'x86_64-apple-darwin'
             name: 'macOS-x64'
           - platform: 'ubuntu-22.04'
             args: ''
+            rust_targets: ''
             name: 'Linux'
           - platform: 'windows-latest'
             args: ''
+            rust_targets: ''
             name: 'Windows'
 
     runs-on: ${{ matrix.platform }}
@@ -39,9 +43,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust stable
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@master
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          toolchain: stable
+          targets: ${{ matrix.rust_targets }}
 
       - name: Install dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
@@ -73,20 +78,3 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
-
-  # Create universal macOS binary
-  universal-macos:
-    needs: build
-    runs-on: macos-latest
-    steps:
-      - name: Download macOS builds
-        uses: actions/download-artifact@v4
-        with:
-          pattern: '*macos*'
-          merge-multiple: true
-
-      - name: Create Universal Binary
-        run: |
-          echo "Universal binary creation would go here"
-          # lipo -create -output "Cartographer Agent-universal.app" arm64.app x64.app
-

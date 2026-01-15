@@ -6,7 +6,7 @@
         statusClass
       ]"
     ></div>
-    <span class="text-gray-600">{{ statusText }}</span>
+    <span class="text-gray-400">{{ statusText }}</span>
   </div>
 </template>
 

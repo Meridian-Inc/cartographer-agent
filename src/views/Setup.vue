@@ -1,52 +1,68 @@
 <template>
-  <div style="min-height: 100vh; background: linear-gradient(to bottom right, #dbeafe, #e0e7ff); display: flex; align-items: center; justify-content: center; padding: 16px;">
-    <div style="background: white; border-radius: 16px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); padding: 32px; max-width: 448px; width: 100%;">
-      <div style="text-align: center; margin-bottom: 32px;">
-        <div style="font-size: 60px; margin-bottom: 16px;">🗺️</div>
-        <h1 style="font-size: 30px; font-weight: bold; color: #111827; margin-bottom: 8px;">Cartographer Agent</h1>
-        <p style="color: #4b5563;">
+  <div class="min-h-screen bg-dark-900 flex items-center justify-center p-4">
+    <!-- Background gradient effect -->
+    <div class="absolute inset-0 bg-gradient-to-br from-brand-cyan/5 via-transparent to-brand-blue/5 pointer-events-none"></div>
+
+    <div class="relative bg-dark-800 border border-dark-600 rounded-xl shadow-2xl p-8 max-w-md w-full">
+      <!-- Logo and Title -->
+      <div class="text-center mb-8">
+        <div class="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-brand-cyan to-brand-blue rounded-xl flex items-center justify-center">
+          <svg class="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+          </svg>
+        </div>
+        <h1 class="text-2xl font-bold text-white mb-2">Cartographer Agent</h1>
+        <p class="text-gray-400 text-sm">
           Monitor your network and sync with Cartographer Cloud automatically.
         </p>
       </div>
 
       <!-- Error State -->
-      <div v-if="errorMessage" style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
-        <p style="color: #dc2626; font-size: 14px; text-align: center;">{{ errorMessage }}</p>
+      <div v-if="errorMessage" class="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-6">
+        <p class="text-red-400 text-sm text-center">{{ errorMessage }}</p>
       </div>
 
       <!-- Idle State -->
-      <div v-if="!loggingIn" style="display: flex; flex-direction: column; gap: 16px;">
+      <div v-if="!loggingIn" class="space-y-4">
         <button
           @click="handleLogin"
-          style="width: 100%; background: #4f46e5; color: white; font-weight: 600; padding: 12px 24px; border-radius: 8px; border: none; cursor: pointer;"
-          onmouseover="this.style.background='#4338ca'"
-          onmouseout="this.style.background='#4f46e5'"
+          class="w-full bg-brand-cyan hover:bg-brand-cyan/90 text-dark-900 font-semibold py-3 px-6 rounded-lg transition-all duration-200 flex items-center justify-center gap-2"
         >
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+          </svg>
           Connect to Cloud
         </button>
-        <p style="font-size: 14px; color: #6b7280; text-align: center;">
+        <p class="text-xs text-gray-500 text-center">
           Sign in and select a network to sync your devices
         </p>
       </div>
 
       <!-- Logging In State -->
-      <div v-else style="display: flex; flex-direction: column; gap: 16px;">
-        <div style="text-align: center;">
-          <div style="display: inline-block; width: 32px; height: 32px; border: 2px solid #4f46e5; border-top-color: transparent; border-radius: 50%; margin-bottom: 16px; animation: spin 1s linear infinite;"></div>
-          <p style="color: #374151; font-weight: 500;">Waiting for authorization...</p>
-          <p style="font-size: 14px; color: #6b7280; margin-top: 8px;">
+      <div v-else class="space-y-4">
+        <div class="text-center">
+          <div class="inline-block w-10 h-10 border-2 border-brand-cyan border-t-transparent rounded-full mb-4 animate-spin"></div>
+          <p class="text-white font-medium">Waiting for authorization...</p>
+          <p class="text-sm text-gray-400 mt-2">
             Complete the sign-in and network selection in your browser.
           </p>
-          <p style="font-size: 12px; color: #9ca3af; margin-top: 16px;">
+          <p class="text-xs text-gray-500 mt-4">
             A browser window should have opened. If not, check your default browser.
           </p>
           <button
             @click="cancelLogin"
-            style="margin-top: 16px; background: none; border: none; color: #6b7280; cursor: pointer; text-decoration: underline; font-size: 14px;"
+            class="mt-4 text-gray-400 hover:text-white text-sm transition-colors"
           >
             Cancel
           </button>
         </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="mt-8 pt-6 border-t border-dark-600">
+        <p class="text-xs text-gray-500 text-center">
+          Lightweight network scanner with cloud sync
+        </p>
       </div>
     </div>
   </div>
@@ -73,7 +89,7 @@ async function handleLogin() {
   loggingIn.value = true
   errorMessage.value = ''
   loginCancelled = false
-  
+
   try {
     const success = await agentStore.login()
     if (loginCancelled) {
@@ -114,4 +130,3 @@ agentStore.checkAuth().then((authenticated) => {
   // Continue showing setup screen
 })
 </script>
-

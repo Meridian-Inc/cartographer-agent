@@ -14,6 +14,16 @@ pub struct Credentials {
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// Legacy credentials format (network_id as integer)
+#[derive(Debug, Deserialize)]
+struct LegacyCredentials {
+    access_token: String,
+    network_id: i32,
+    network_name: String,
+    user_email: String,
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthStatus {
     pub authenticated: bool,
@@ -43,8 +53,33 @@ pub async fn load_credentials() -> Result<Option<Credentials>> {
     let content = fs::read_to_string(&path)
         .context("Failed to read credentials file")?;
     
-    let creds: Credentials = serde_json::from_str(&content)
-        .context("Failed to parse credentials")?;
+    // Try to parse as current format first
+    let creds: Credentials = match serde_json::from_str(&content) {
+        Ok(c) => c,
+        Err(_) => {
+            // Try to parse as legacy format (network_id as integer)
+            if let Ok(legacy) = serde_json::from_str::<LegacyCredentials>(&content) {
+                tracing::info!("Migrating credentials from legacy format");
+                let migrated = Credentials {
+                    access_token: legacy.access_token,
+                    network_id: legacy.network_id.to_string(),
+                    network_name: legacy.network_name,
+                    user_email: legacy.user_email,
+                    expires_at: legacy.expires_at,
+                };
+                // Save migrated credentials
+                if let Err(e) = save_credentials_sync(&migrated, &path) {
+                    tracing::warn!("Failed to save migrated credentials: {}", e);
+                }
+                migrated
+            } else {
+                // Credentials file is corrupted, delete it
+                tracing::warn!("Credentials file corrupted, deleting");
+                let _ = fs::remove_file(&path);
+                return Ok(None);
+            }
+        }
+    };
     
     // Check if expired
     if let Some(expires_at) = creds.expires_at {
@@ -56,6 +91,14 @@ pub async fn load_credentials() -> Result<Option<Credentials>> {
     }
     
     Ok(Some(creds))
+}
+
+fn save_credentials_sync(creds: &Credentials, path: &PathBuf) -> Result<()> {
+    let content = serde_json::to_string_pretty(creds)
+        .context("Failed to serialize credentials")?;
+    fs::write(path, content)
+        .context("Failed to write credentials file")?;
+    Ok(())
 }
 
 pub async fn save_credentials(creds: &Credentials) -> Result<()> {

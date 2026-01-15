@@ -50,12 +50,22 @@ pub async fn run_cli() {
         }
         Some(Commands::Scan) => {
             println!("Scanning network...");
-            match crate::scanner::scan_network().await {
+            // Use commands::scan_network which also uploads to cloud
+            match crate::commands::scan_network().await {
                 Ok(devices) => {
                     println!("✓ Found {} devices", devices.len());
-                    for device in devices {
+                    for device in &devices {
                         println!("  - {} ({:.1}ms)", device.ip, 
                             device.response_time_ms.unwrap_or(0.0));
+                    }
+                    // Check if we're authenticated to report upload status
+                    if let Ok(status) = crate::auth::check_auth().await {
+                        if status.authenticated {
+                            println!("✓ Scan synced to cloud network '{}'", 
+                                status.network_name.unwrap_or_else(|| "Unknown".to_string()));
+                        } else {
+                            println!("⚠ Not signed in - scan not uploaded to cloud");
+                        }
                     }
                 }
                 Err(e) => {

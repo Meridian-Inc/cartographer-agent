@@ -68,13 +68,26 @@ pub async fn logout() -> Result<(), String> {
 pub async fn scan_network() -> Result<Vec<Device>, String> {
     let devices = scanner_scan_network().await.map_err(|e| format!("{}", e))?;
     
+    tracing::info!("Scan complete, found {} devices", devices.len());
+    
     // Upload to cloud if authenticated
-    if let Ok(status) = check_auth().await {
-        if status.authenticated {
+    match check_auth().await {
+        Ok(status) if status.authenticated => {
+            tracing::info!(
+                "Authenticated as {}, uploading to network '{}'",
+                status.user_email.as_deref().unwrap_or("Unknown"),
+                status.network_name.as_deref().unwrap_or("Unknown")
+            );
             let client = get_cloud_client().await;
             if let Err(e) = client.upload_scan(&devices).await {
                 tracing::warn!("Failed to upload scan to cloud: {}", e);
             }
+        }
+        Ok(_) => {
+            tracing::info!("Not authenticated, skipping cloud upload");
+        }
+        Err(e) => {
+            tracing::warn!("Failed to check auth status: {}", e);
         }
     }
     

@@ -96,6 +96,12 @@ impl CloudClient {
         
         let url = format!("{}/agent/sync", self.base_url);
         
+        tracing::info!(
+            "Uploading {} devices to cloud (network: {})", 
+            devices.len(), 
+            creds.network_name
+        );
+        
         let payload = SyncRequest {
             timestamp: chrono::Utc::now().to_rfc3339(),
             scan_duration_ms: None,
@@ -119,9 +125,13 @@ impl CloudClient {
             .context("Failed to upload scan")?;
         
         if !resp.status().is_success() {
-            return Err(anyhow::anyhow!("Server returned error: {}", resp.status()));
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::error!("Sync failed: {} - {}", status, body);
+            return Err(anyhow::anyhow!("Server returned error: {} - {}", status, body));
         }
         
+        tracing::info!("Scan uploaded successfully");
         Ok(())
     }
 

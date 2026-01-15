@@ -1,10 +1,9 @@
 //! Ping sweep using system ping command
 //! No special drivers or libraries required
 
-use crate::scanner::Device;
+use crate::scanner::{hidden_command, Device};
 use anyhow::{Context, Result};
 use ipnetwork::IpNetwork;
-use std::process::Command;
 use std::time::Instant;
 
 /// Perform a ping sweep of the subnet using the system ping command
@@ -51,12 +50,12 @@ async fn ping_host(ip: &str) -> Result<Option<Device>> {
     let start = Instant::now();
     
     #[cfg(target_os = "windows")]
-    let output = Command::new("ping")
+    let output = hidden_command("ping")
         .args(["-n", "1", "-w", "1000", ip])
         .output();
     
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    let output = Command::new("ping")
+    let output = hidden_command("ping")
         .args(["-c", "1", "-W", "1", ip])
         .output();
     

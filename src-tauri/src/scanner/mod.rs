@@ -3,6 +3,23 @@ mod ping;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::process::Command;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+/// Windows flag to hide console window when spawning processes
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Create a Command that hides the console window on Windows.
+/// On other platforms, this just creates a normal Command.
+pub fn hidden_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Device {
@@ -44,12 +61,9 @@ pub async fn scan_network() -> Result<Vec<Device>> {
         }
     }
     
-    // Try to resolve hostnames
-    for device in &mut devices {
-        if device.hostname.is_none() {
-            device.hostname = resolve_hostname(&device.ip).await;
-        }
-    }
+    // Note: Hostname resolution is skipped during scan to avoid spawning
+    // many external processes (one per device). Hostnames can be resolved
+    // lazily in the UI or via a background task if needed.
     
     Ok(devices)
 }
@@ -83,10 +97,8 @@ async fn get_network_info_internal() -> Result<(String, String)> {
 
 #[cfg(target_os = "windows")]
 async fn get_windows_network_info() -> Result<(String, String)> {
-    use std::process::Command;
-    
     // Get default gateway and interface using route print
-    let output = Command::new("powershell")
+    let output = hidden_command("powershell")
         .args(["-Command", r#"
             $adapter = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null } | Select-Object -First 1
             if ($adapter) {
@@ -124,10 +136,8 @@ async fn get_windows_network_info() -> Result<(String, String)> {
 
 #[cfg(target_os = "linux")]
 async fn get_linux_network_info() -> Result<(String, String)> {
-    use std::process::Command;
-    
     // Get default interface
-    let route_output = Command::new("ip")
+    let route_output = hidden_command("ip")
         .args(["route", "show", "default"])
         .output()
         .context("Failed to run ip route command")?;
@@ -141,7 +151,7 @@ async fn get_linux_network_info() -> Result<(String, String)> {
         .to_string();
     
     // Get IP and subnet for the interface
-    let addr_output = Command::new("ip")
+    let addr_output = hidden_command("ip")
         .args(["addr", "show", &interface])
         .output()
         .context("Failed to run ip addr command")?;
@@ -167,10 +177,8 @@ async fn get_linux_network_info() -> Result<(String, String)> {
 
 #[cfg(target_os = "macos")]
 async fn get_macos_network_info() -> Result<(String, String)> {
-    use std::process::Command;
-    
     // Get default interface
-    let route_output = Command::new("route")
+    let route_output = hidden_command("route")
         .args(["-n", "get", "default"])
         .output()
         .context("Failed to run route command")?;
@@ -184,7 +192,7 @@ async fn get_macos_network_info() -> Result<(String, String)> {
         .unwrap_or_else(|| "en0".to_string());
     
     // Get IP and subnet for the interface
-    let ifconfig_output = Command::new("ifconfig")
+    let ifconfig_output = hidden_command("ifconfig")
         .arg(&interface)
         .output()
         .context("Failed to run ifconfig command")?;
@@ -213,13 +221,15 @@ async fn get_macos_network_info() -> Result<(String, String)> {
     Ok((interface, "192.168.1.0/24".to_string()))
 }
 
+/// Resolve hostname for an IP address using system commands.
+/// Currently unused during scans to avoid spawning many processes,
+/// but kept for potential future lazy resolution.
+#[allow(dead_code)]
 async fn resolve_hostname(ip: &str) -> Option<String> {
-    use std::process::Command;
-    
     #[cfg(target_os = "windows")]
     {
         // Use nbtstat for NetBIOS name resolution
-        let output = Command::new("nbtstat")
+        let output = hidden_command("nbtstat")
             .args(["-A", ip])
             .output()
             .ok()?;
@@ -235,8 +245,8 @@ async fn resolve_hostname(ip: &str) -> Option<String> {
     
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-    // Try reverse DNS lookup
-        let output = Command::new("host")
+        // Try reverse DNS lookup
+        let output = hidden_command("host")
             .arg(ip)
             .output()
             .ok()?;

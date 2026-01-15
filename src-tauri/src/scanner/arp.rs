@@ -1,9 +1,8 @@
 //! ARP table scanning using system commands
 //! No special drivers or libraries required
 
-use crate::scanner::Device;
+use crate::scanner::{hidden_command, Device};
 use anyhow::Result;
-use std::process::Command;
 
 /// Get devices from the system ARP table
 /// This returns devices that have already been seen on the network
@@ -31,7 +30,7 @@ pub async fn get_arp_table() -> Result<Vec<Device>> {
 
 #[cfg(target_os = "windows")]
 fn get_arp_table_windows() -> Result<Vec<Device>> {
-    let output = Command::new("arp")
+    let output = hidden_command("arp")
         .args(["-a"])
         .output()?;
     
@@ -77,7 +76,7 @@ fn get_arp_table_windows() -> Result<Vec<Device>> {
 
 #[cfg(target_os = "linux")]
 fn get_arp_table_linux() -> Result<Vec<Device>> {
-    let output = Command::new("arp")
+    let output = hidden_command("arp")
         .args(["-n"])
         .output()?;
     
@@ -118,7 +117,7 @@ fn get_arp_table_linux() -> Result<Vec<Device>> {
 
 #[cfg(target_os = "macos")]
 fn get_arp_table_macos() -> Result<Vec<Device>> {
-    let output = Command::new("arp")
+    let output = hidden_command("arp")
         .args(["-a", "-n"])
         .output()?;
     

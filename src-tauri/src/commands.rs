@@ -1,7 +1,10 @@
 use crate::auth::{check_auth, start_login, logout as auth_logout};
 use crate::cloud::CloudClient;
-use crate::scanner::{scan_network as scanner_scan_network, Device};
-use crate::scheduler::{set_scan_interval as scheduler_set_scan_interval, get_scan_interval, update_known_devices};
+use crate::scanner::{scan_network as scanner_scan_network, ping_device, Device};
+use crate::scheduler::{
+    get_known_devices, get_scan_interval, set_scan_interval as scheduler_set_scan_interval,
+    update_known_devices, DeviceHealthResult,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -151,5 +154,75 @@ pub async fn set_notifications_enabled(_enabled: bool) -> Result<(), String> {
 pub async fn get_notifications_enabled() -> Result<bool, String> {
     // Read from config file
     Ok(true)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthCheckStatus {
+    pub total_devices: usize,
+    pub healthy_devices: usize,
+    pub unreachable_devices: usize,
+    pub synced_to_cloud: bool,
+}
+
+#[tauri::command]
+pub async fn run_health_check() -> Result<HealthCheckStatus, String> {
+    let devices = get_known_devices().await;
+    
+    if devices.is_empty() {
+        return Err("No devices to check. Run a scan first.".to_string());
+    }
+    
+    tracing::info!("Running manual health check on {} devices", devices.len());
+    
+    // Ping all known devices
+    let mut health_results = Vec::new();
+    for device in &devices {
+        let result = ping_device(&device.ip).await;
+        health_results.push(DeviceHealthResult {
+            ip: device.ip.clone(),
+            reachable: result.is_ok(),
+            response_time_ms: result.ok(),
+        });
+    }
+    
+    let healthy_count = health_results.iter().filter(|r| r.reachable).count();
+    let unreachable_count = health_results.len() - healthy_count;
+    
+    tracing::info!(
+        "Health check complete: {} healthy, {} unreachable",
+        healthy_count,
+        unreachable_count
+    );
+    
+    // Upload to cloud if authenticated
+    let mut synced = false;
+    match check_auth().await {
+        Ok(status) if status.authenticated => {
+            let client = get_cloud_client().await;
+            match client.upload_health_check(&health_results).await {
+                Ok(_) => {
+                    tracing::info!("Health check results synced to cloud");
+                    synced = true;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to upload health check to cloud: {}", e);
+                }
+            }
+        }
+        Ok(_) => {
+            tracing::info!("Not authenticated, skipping cloud upload");
+        }
+        Err(e) => {
+            tracing::warn!("Failed to check auth status: {}", e);
+        }
+    }
+    
+    Ok(HealthCheckStatus {
+        total_devices: health_results.len(),
+        healthy_devices: healthy_count,
+        unreachable_devices: unreachable_count,
+        synced_to_cloud: synced,
+    })
 }
 

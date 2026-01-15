@@ -53,13 +53,40 @@
           <h2 class="text-lg font-semibold text-gray-900">
             {{ devices.length }} device{{ devices.length !== 1 ? 's' : '' }} found
           </h2>
-          <button
-            @click="handleScan"
-            :disabled="scanning"
-            class="bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-400 text-white font-medium py-2 px-4 rounded-lg transition-colors"
-          >
-            {{ scanning ? 'Scanning...' : 'Scan Now' }}
-          </button>
+          <div class="flex gap-2">
+            <button
+              @click="handleHealthCheck"
+              :disabled="checkingHealth || devices.length === 0"
+              class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-400 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+              title="Check if devices are reachable"
+            >
+              {{ checkingHealth ? 'Checking...' : '🩺 Health Check' }}
+            </button>
+            <button
+              @click="handleScan"
+              :disabled="scanning"
+              class="bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-400 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+            >
+              {{ scanning ? 'Scanning...' : 'Scan Now' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Health Check Results -->
+        <div v-if="healthStatus" class="mb-4 p-3 bg-gray-50 rounded-lg text-sm">
+          <div class="flex items-center justify-between">
+            <div class="flex gap-4">
+              <span class="text-green-600">
+                ✓ {{ healthStatus.healthyDevices }} healthy
+              </span>
+              <span v-if="healthStatus.unreachableDevices > 0" class="text-red-600">
+                ✗ {{ healthStatus.unreachableDevices }} unreachable
+              </span>
+            </div>
+            <span v-if="healthStatus.syncedToCloud" class="text-indigo-600 text-xs">
+              ☁️ Synced
+            </span>
+          </div>
         </div>
 
         <DeviceList :devices="devices" />
@@ -84,9 +111,18 @@ import { useAgentStore } from '@/stores/agent'
 import DeviceList from '@/components/DeviceList.vue'
 import { invoke } from '@tauri-apps/api/core'
 
+interface HealthCheckStatus {
+  totalDevices: number
+  healthyDevices: number
+  unreachableDevices: number
+  syncedToCloud: boolean
+}
+
 const agentStore = useAgentStore()
 const networkInfo = ref<string>('')
 const lastScanTime = ref<string>('')
+const checkingHealth = ref(false)
+const healthStatus = ref<HealthCheckStatus | null>(null)
 
 const status = computed(() => agentStore.status)
 const devices = computed(() => agentStore.devices)
@@ -96,9 +132,24 @@ async function handleScan() {
   try {
     await agentStore.scanNow()
     await updateLastScanTime()
+    // Clear health status when scanning new devices
+    healthStatus.value = null
   } catch (error) {
     console.error('Scan error:', error)
     alert('Failed to scan network. Please try again.')
+  }
+}
+
+async function handleHealthCheck() {
+  checkingHealth.value = true
+  try {
+    const result = await invoke<HealthCheckStatus>('run_health_check')
+    healthStatus.value = result
+  } catch (error) {
+    console.error('Health check error:', error)
+    alert(`Health check failed: ${error}`)
+  } finally {
+    checkingHealth.value = false
   }
 }
 

@@ -30,37 +30,41 @@ pub async fn get_arp_table() -> Result<Vec<Device>> {
 
 #[cfg(target_os = "windows")]
 fn get_arp_table_windows() -> Result<Vec<Device>> {
+    use std::collections::HashMap;
+
     let output = hidden_command("arp")
         .args(["-a"])
         .output()?;
-    
+
     let output_str = String::from_utf8_lossy(&output.stdout);
-    let mut devices = Vec::new();
-    
+    // Use HashMap to deduplicate by IP (arp -a can show same IP under multiple interfaces)
+    let mut devices_by_ip: HashMap<String, Device> = HashMap::new();
+
     for line in output_str.lines() {
         let line = line.trim();
-        
+
         // Skip empty lines and headers
         if line.is_empty() || line.starts_with("Interface") || line.contains("Internet Address") {
             continue;
         }
-        
+
         // Parse lines like: "192.168.1.1          00-11-22-33-44-55     dynamic"
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 2 {
             let ip = parts[0];
             let mac = parts[1];
-            
+
             // Validate IP format
             if ip.parse::<std::net::IpAddr>().is_ok() {
                 // Skip multicast and broadcast addresses
                 if ip.starts_with("224.") || ip.starts_with("239.") || ip.ends_with(".255") {
                     continue;
                 }
-                
+
                 // Validate MAC format (Windows uses dashes)
                 if mac.contains('-') && mac.len() == 17 {
-                    devices.push(Device {
+                    // Only insert if not already present (first occurrence wins)
+                    devices_by_ip.entry(ip.to_string()).or_insert_with(|| Device {
                         ip: ip.to_string(),
                         mac: Some(mac.replace('-', ":")),
                         response_time_ms: None,
@@ -70,8 +74,8 @@ fn get_arp_table_windows() -> Result<Vec<Device>> {
             }
         }
     }
-    
-    Ok(devices)
+
+    Ok(devices_by_ip.into_values().collect())
 }
 
 #[cfg(target_os = "linux")]

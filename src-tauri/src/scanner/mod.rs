@@ -92,6 +92,38 @@ fn get_local_hostname() -> Option<String> {
     }
 }
 
+/// Deduplicate devices by IP address, keeping the most complete record.
+/// When duplicates are found, prefers the record with more data (MAC, hostname, response time).
+fn deduplicate_devices_by_ip(devices: Vec<Device>) -> Vec<Device> {
+    use std::collections::HashMap;
+
+    let mut by_ip: HashMap<String, Device> = HashMap::new();
+
+    for device in devices {
+        if let Some(existing) = by_ip.get_mut(&device.ip) {
+            // Merge data: keep the most complete record
+            if existing.mac.is_none() && device.mac.is_some() {
+                existing.mac = device.mac;
+            }
+            if existing.hostname.is_none() && device.hostname.is_some() {
+                existing.hostname = device.hostname;
+            }
+            // Prefer non-zero response times
+            if existing.response_time_ms.is_none()
+                || (device.response_time_ms.is_some()
+                    && device.response_time_ms.unwrap_or(0.0) > 0.0
+                    && existing.response_time_ms.unwrap_or(0.0) == 0.0)
+            {
+                existing.response_time_ms = device.response_time_ms;
+            }
+        } else {
+            by_ip.insert(device.ip.clone(), device);
+        }
+    }
+
+    by_ip.into_values().collect()
+}
+
 /// Progress updates during network scanning
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -273,6 +305,9 @@ pub async fn scan_network_with_progress(
             Some(devices.len()),
         );
     }
+
+    // Deduplicate devices by IP address (in case of duplicates from ARP or ping)
+    let devices = deduplicate_devices_by_ip(devices);
 
     // Stage 5: Complete
     let total_duration = scan_start.elapsed();

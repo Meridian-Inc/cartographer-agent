@@ -6,15 +6,19 @@
       class="flex items-center justify-between p-3 bg-dark-700 rounded-lg hover:bg-dark-600 transition-colors border border-dark-600"
     >
       <div class="flex items-center space-x-3">
-        <div class="w-2.5 h-2.5 bg-green-500 rounded-full"></div>
+        <div
+          class="w-2.5 h-2.5 rounded-full"
+          :class="getDeviceStatusClass(device)"
+          :title="getDeviceStatusTitle(device)"
+        ></div>
         <div>
           <div class="font-mono text-sm font-medium text-white">{{ device.ip }}</div>
           <div v-if="device.hostname" class="text-xs text-gray-400">{{ device.hostname }}</div>
           <div v-if="device.mac" class="text-xs text-gray-500 font-mono">{{ device.mac }}</div>
         </div>
       </div>
-      <div v-if="device.response_time_ms" class="text-xs text-brand-cyan font-mono">
-        {{ device.response_time_ms.toFixed(1) }}ms
+      <div v-if="device.response_time_ms !== null && device.response_time_ms !== undefined" class="text-xs font-mono" :class="device.response_time_ms > 0 ? 'text-brand-cyan' : 'text-yellow-500'">
+        {{ device.response_time_ms > 0 ? `${device.response_time_ms.toFixed(1)}ms` : 'ARP only' }}
       </div>
     </div>
     <div v-if="devices.length === 0" class="text-center text-gray-500 py-8">
@@ -33,4 +37,28 @@ import type { Device } from '@/stores/agent'
 defineProps<{
   devices: Device[]
 }>()
+
+// Determine device status based on response time
+// - Green: Device responded to ping (response_time > 0)
+// - Yellow: Device in ARP table but no ping response (response_time = 0)
+// - Gray: No response data (device status unknown)
+function getDeviceStatusClass(device: Device): string {
+  if (device.response_time_ms === null || device.response_time_ms === undefined) {
+    return 'bg-gray-500' // Unknown status
+  }
+  if (device.response_time_ms > 0) {
+    return 'bg-green-500' // Online - responded to ping
+  }
+  return 'bg-yellow-500' // Degraded - in ARP but no ping response
+}
+
+function getDeviceStatusTitle(device: Device): string {
+  if (device.response_time_ms === null || device.response_time_ms === undefined) {
+    return 'Status unknown'
+  }
+  if (device.response_time_ms > 0) {
+    return 'Online - responding to ping'
+  }
+  return 'Degraded - in ARP table but not responding to ping'
+}
 </script>

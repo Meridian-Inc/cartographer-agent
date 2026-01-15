@@ -57,6 +57,8 @@ pub struct NetworkInfo {
     pub interface: String,
     pub subnet: String,
     pub gateway_ip: Option<String>,
+    /// The local IP address of this machine on the network
+    pub local_ip: Option<String>,
 }
 
 /// Scan result containing devices and network information
@@ -64,6 +66,30 @@ pub struct NetworkInfo {
 pub struct ScanResult {
     pub devices: Vec<Device>,
     pub network_info: NetworkInfo,
+}
+
+/// Get the local machine's hostname
+fn get_local_hostname() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        // Use COMPUTERNAME environment variable on Windows
+        std::env::var("COMPUTERNAME").ok()
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        // Use hostname command on Unix-like systems
+        hidden_command("hostname")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        None
+    }
 }
 
 /// Progress updates during network scanning
@@ -206,6 +232,19 @@ pub async fn scan_network_with_progress(
                 Some(50),
                 Some(devices.len()),
             );
+        }
+    }
+
+    // Ensure the local machine is included in the device list
+    if let Some(ref local_ip) = network_info.local_ip {
+        if !devices.iter().any(|d| &d.ip == local_ip) {
+            tracing::info!("Adding local machine {} to device list", local_ip);
+            devices.push(Device {
+                ip: local_ip.clone(),
+                mac: None,
+                response_time_ms: Some(0.0), // Local machine has instant response
+                hostname: get_local_hostname(),
+            });
         }
     }
 
@@ -488,7 +527,7 @@ async fn get_windows_network_info_full() -> Result<NetworkInfo> {
                     $networkBytes += $ipBytes[$i] -band $maskBytes[$i]
                 }
                 $network = [System.Net.IPAddress]::new($networkBytes)
-                Write-Output "$iface|$network/$prefix|$gateway"
+                Write-Output "$iface|$network/$prefix|$gateway|$ip"
             }
         "#])
         .output()
@@ -502,11 +541,13 @@ async fn get_windows_network_info_full() -> Result<NetworkInfo> {
             let interface = parts[0].to_string();
             let subnet = parts[1].to_string();
             let gateway_ip = parts.get(2).map(|s| s.to_string()).filter(|s| !s.is_empty());
+            let local_ip = parts.get(3).map(|s| s.to_string()).filter(|s| !s.is_empty());
 
             return Ok(NetworkInfo {
                 interface,
                 subnet,
                 gateway_ip,
+                local_ip,
             });
         }
     }
@@ -516,6 +557,7 @@ async fn get_windows_network_info_full() -> Result<NetworkInfo> {
         interface: "Ethernet".to_string(),
         subnet: "192.168.1.0/24".to_string(),
         gateway_ip: Some("192.168.1.1".to_string()),
+        local_ip: None,
     })
 }
 
@@ -560,11 +602,13 @@ async fn get_linux_network_info_full() -> Result<NetworkInfo> {
             if let Some(cidr) = trimmed.split_whitespace().nth(1) {
                 // Convert IP/prefix to network/prefix
                 if let Ok(network) = cidr.parse::<ipnetwork::IpNetwork>() {
+                    let local_ip = network.ip().to_string();
                     let subnet = format!("{}/{}", network.network(), network.prefix());
                     return Ok(NetworkInfo {
                         interface,
                         subnet,
                         gateway_ip,
+                        local_ip: Some(local_ip),
                     });
                 }
             }
@@ -575,6 +619,7 @@ async fn get_linux_network_info_full() -> Result<NetworkInfo> {
         interface,
         subnet: "192.168.1.0/24".to_string(),
         gateway_ip,
+        local_ip: None,
     })
 }
 
@@ -628,6 +673,7 @@ async fn get_macos_network_info_full() -> Result<NetworkInfo> {
                         interface,
                         subnet: format!("{}/{}", network, prefix),
                         gateway_ip,
+                        local_ip: Some(ip.to_string()),
                     });
                 }
             }
@@ -638,6 +684,7 @@ async fn get_macos_network_info_full() -> Result<NetworkInfo> {
         interface,
         subnet: "192.168.1.0/24".to_string(),
         gateway_ip,
+        local_ip: None,
     })
 }
 

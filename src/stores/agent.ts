@@ -141,6 +141,11 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
+  // Update devices with new data (e.g., after health check)
+  function updateDevices(newDevices: Device[]) {
+    devices.value = newDevices
+  }
+
   // Initialize listeners on store creation
   initEventListeners()
 
@@ -157,6 +162,7 @@ export const useAgentStore = defineStore('agent', () => {
     scanNow,
     refreshStatus,
     setScanInterval,
+    updateDevices,
     cleanupEventListeners
   }
 })

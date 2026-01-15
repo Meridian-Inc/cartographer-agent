@@ -1,5 +1,6 @@
 use crate::auth::{check_auth, logout as auth_logout, start_login};
 use crate::cloud::CloudClient;
+use crate::persistence::update_device_health;
 use crate::scanner::{
     check_device_reachable, get_arp_table_ips, scan_network_with_progress, Device, ScanProgress,
 };
@@ -198,6 +199,8 @@ pub struct HealthCheckStatus {
     pub healthy_devices: usize,
     pub unreachable_devices: usize,
     pub synced_to_cloud: bool,
+    /// Updated device list with latest health data
+    pub devices: Vec<Device>,
 }
 
 #[tauri::command]
@@ -235,6 +238,23 @@ pub async fn run_health_check() -> Result<HealthCheckStatus, String> {
         unreachable_count
     );
 
+    // Update persisted device health data
+    // For unreachable devices, set response_time_ms to None (will show as red/offline)
+    let health_updates: Vec<(String, Option<f64>)> = health_results
+        .iter()
+        .map(|r| {
+            let response_time = if r.reachable {
+                r.response_time_ms
+            } else {
+                None // Mark as unreachable
+            };
+            (r.ip.clone(), response_time)
+        })
+        .collect();
+
+    let updated_devices = update_device_health(&health_updates)
+        .map_err(|e| format!("Failed to update device health: {}", e))?;
+
     // Upload to cloud if authenticated
     let mut synced = false;
     match check_auth().await {
@@ -263,6 +283,7 @@ pub async fn run_health_check() -> Result<HealthCheckStatus, String> {
         healthy_devices: healthy_count,
         unreachable_devices: unreachable_count,
         synced_to_cloud: synced,
+        devices: updated_devices,
     })
 }
 

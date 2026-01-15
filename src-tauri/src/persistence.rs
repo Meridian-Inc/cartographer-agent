@@ -93,3 +93,18 @@ pub fn get_stored_last_scan_time() -> u64 {
 pub fn get_stored_devices() -> Vec<Device> {
     load_state().map(|s| s.devices).unwrap_or_default()
 }
+
+/// Update device health data (response times) after a health check
+/// Returns the updated devices
+pub fn update_device_health(health_results: &[(String, Option<f64>)]) -> Result<Vec<Device>> {
+    let mut state = load_state().unwrap_or_default();
+
+    for (ip, response_time) in health_results {
+        if let Some(device) = state.devices.iter_mut().find(|d| &d.ip == ip) {
+            device.response_time_ms = *response_time;
+        }
+    }
+
+    save_state(&state)?;
+    Ok(state.devices)
+}

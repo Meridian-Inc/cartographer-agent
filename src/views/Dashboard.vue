@@ -17,8 +17,8 @@
               <div>
                 <h1 class="text-xl font-bold text-white">Cartographer Agent</h1>
                 <p class="text-sm text-gray-400 flex items-center gap-2">
-                  <span class="w-2 h-2 bg-green-500 rounded-full"></span>
-                  Connected as {{ status.userEmail || 'Unknown' }}
+                  <span class="w-2 h-2 rounded-full" :class="statusDotClass"></span>
+                  {{ statusLabel }} as {{ status.userEmail || 'Unknown' }}
                 </p>
               </div>
             </div>
@@ -183,6 +183,12 @@ interface HealthCheckStatus {
   healthyDevices: number
   unreachableDevices: number
   syncedToCloud: boolean
+  devices: Array<{
+    ip: string
+    mac: string | null
+    hostname: string | null
+    response_time_ms: number | null
+  }>
 }
 
 const agentStore = useAgentStore()
@@ -194,6 +200,63 @@ const status = computed(() => agentStore.status)
 const devices = computed(() => agentStore.devices)
 const scanning = computed(() => agentStore.scanning)
 const scanProgress = computed(() => agentStore.scanProgress)
+
+// Determine overall network health status for the indicator dot
+type NetworkHealthStatus = 'online' | 'degraded' | 'offline'
+
+const networkHealthStatus = computed<NetworkHealthStatus>(() => {
+  // If currently scanning or checking health, maintain previous state (default to online)
+  if (scanning.value || checkingHealth.value) {
+    return 'online'
+  }
+
+  // If we have health check results, use them to determine status
+  if (healthStatus.value) {
+    const { totalDevices, healthyDevices, unreachableDevices } = healthStatus.value
+
+    // All devices unreachable = offline
+    if (totalDevices > 0 && unreachableDevices === totalDevices) {
+      return 'offline'
+    }
+
+    // Some devices unreachable = degraded
+    if (unreachableDevices > 0) {
+      return 'degraded'
+    }
+
+    // All devices healthy = online
+    return 'online'
+  }
+
+  // No health data yet - default to online (connected state)
+  return 'online'
+})
+
+const statusDotClass = computed(() => {
+  switch (networkHealthStatus.value) {
+    case 'online':
+      return 'bg-green-500'
+    case 'degraded':
+      return 'bg-yellow-500'
+    case 'offline':
+      return 'bg-red-500'
+    default:
+      return 'bg-green-500'
+  }
+})
+
+const statusLabel = computed(() => {
+  switch (networkHealthStatus.value) {
+    case 'online':
+      return 'Connected'
+    case 'degraded':
+      return 'Degraded'
+    case 'offline':
+      return 'Offline'
+    default:
+      return 'Connected'
+  }
+})
 
 // Get human-readable label for scan stage
 function getScanStageLabel(stage: ScanStage): string {
@@ -235,6 +298,10 @@ async function handleHealthCheck() {
   try {
     const result = await invoke<HealthCheckStatus>('run_health_check')
     healthStatus.value = result
+    // Update devices with latest health data
+    if (result.devices && result.devices.length > 0) {
+      agentStore.updateDevices(result.devices)
+    }
   } catch (error) {
     console.error('Health check error:', error)
     alert(`Health check failed: ${error}`)

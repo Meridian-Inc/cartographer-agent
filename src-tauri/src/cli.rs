@@ -70,7 +70,7 @@ pub async fn run_cli() {
                     if status.authenticated {
                         println!("Status: Connected");
                         println!("Email: {}", status.user_email.unwrap_or_else(|| "Unknown".to_string()));
-                        println!("Agent ID: {}", status.agent_id.unwrap_or_else(|| "Unknown".to_string()));
+                        println!("Network: {}", status.network_name.unwrap_or_else(|| "Unknown".to_string()));
                     } else {
                         println!("Status: Not signed in");
                         println!("Run 'cartographer-agent login' to sign in");

@@ -1,5 +1,5 @@
 use crate::auth::credentials::{save_credentials, Credentials};
-use crate::cloud::{CloudClient, DeviceCodeResponse, TokenResponse};
+use crate::cloud::CloudClient;
 use anyhow::{Context, Result};
 use std::time::Duration;
 use tokio::time::sleep;

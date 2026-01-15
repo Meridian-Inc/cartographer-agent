@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 pub struct AgentStatus {
     pub authenticated: bool,
     pub user_email: Option<String>,
-    pub network_id: Option<i32>,
+    pub network_id: Option<String>,
     pub network_name: Option<String>,
     pub last_scan: Option<String>,
     pub next_scan: Option<String>,

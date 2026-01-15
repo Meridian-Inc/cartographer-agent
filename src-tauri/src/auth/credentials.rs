@@ -8,7 +8,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Credentials {
     pub access_token: String,
-    pub network_id: i32,
+    pub network_id: String,
     pub network_name: String,
     pub user_email: String,
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -18,7 +18,7 @@ pub struct Credentials {
 pub struct AuthStatus {
     pub authenticated: bool,
     pub user_email: Option<String>,
-    pub network_id: Option<i32>,
+    pub network_id: Option<String>,
     pub network_name: Option<String>,
 }
 

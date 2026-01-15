@@ -187,7 +187,7 @@ pub struct TokenResponse {
     pub access_token: String,
     pub token_type: String,
     pub expires_in: Option<u64>,
-    pub network_id: i32,
+    pub network_id: String,
     pub network_name: String,
     pub user_email: String,
 }
@@ -217,7 +217,7 @@ struct ScanDevice {
 
 #[derive(Debug, Deserialize)]
 pub struct NetworkInfoResponse {
-    pub network_id: i32,
+    pub network_id: String,
     pub network_name: String,
     pub last_sync_at: Option<String>,
 }

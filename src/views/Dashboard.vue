@@ -42,7 +42,7 @@
           </div>
           <div>
             <span class="text-gray-600">Last scan:</span>
-            <span class="ml-2 text-gray-900">{{ lastScanTime || 'Never' }}</span>
+            <span class="ml-2 text-gray-900">{{ lastScanTime }}</span>
           </div>
         </div>
       </div>
@@ -120,7 +120,6 @@ interface HealthCheckStatus {
 
 const agentStore = useAgentStore()
 const networkInfo = ref<string>('')
-const lastScanTime = ref<string>('')
 const checkingHealth = ref(false)
 const healthStatus = ref<HealthCheckStatus | null>(null)
 
@@ -128,10 +127,20 @@ const status = computed(() => agentStore.status)
 const devices = computed(() => agentStore.devices)
 const scanning = computed(() => agentStore.scanning)
 
+// Computed last scan time that updates when status changes
+const lastScanTime = computed(() => {
+  if (agentStore.status.lastScan) {
+    const date = new Date(agentStore.status.lastScan)
+    return date.toLocaleString()
+  }
+  return 'Never'
+})
+
 async function handleScan() {
   try {
     await agentStore.scanNow()
-    await updateLastScanTime()
+    // Refresh status to get updated lastScan time
+    await agentStore.refreshStatus()
     // Clear health status when scanning new devices
     healthStatus.value = null
   } catch (error) {
@@ -175,13 +184,6 @@ async function handleDisconnect() {
   }
 }
 
-async function updateLastScanTime() {
-  if (agentStore.status.lastScan) {
-    const date = new Date(agentStore.status.lastScan)
-    lastScanTime.value = date.toLocaleString()
-  }
-}
-
 async function loadNetworkInfo() {
   try {
     const info = await invoke<string>('get_network_info')
@@ -194,9 +196,8 @@ async function loadNetworkInfo() {
 onMounted(async () => {
   await agentStore.refreshStatus()
   await loadNetworkInfo()
-  await updateLastScanTime()
-  
-  // Refresh status periodically
+
+  // Refresh status periodically (updates lastScan time automatically)
   setInterval(() => {
     agentStore.refreshStatus()
   }, 30000) // Every 30 seconds

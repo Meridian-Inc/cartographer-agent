@@ -1,8 +1,9 @@
-use crate::auth::{check_auth, start_login, logout as auth_logout};
+use crate::auth::{check_auth, logout as auth_logout, start_login};
 use crate::cloud::CloudClient;
-use crate::scanner::{scan_network as scanner_scan_network, ping_device, Device};
+use crate::scanner::{ping_device, scan_network as scanner_scan_network, Device};
 use crate::scheduler::{
-    get_known_devices, get_scan_interval, set_scan_interval as scheduler_set_scan_interval,
+    ensure_background_scanning, get_known_devices, get_last_scan_time, get_scan_interval,
+    persist_state, record_scan_time, set_scan_interval as scheduler_set_scan_interval,
     update_known_devices, DeviceHealthResult,
 };
 use serde::{Deserialize, Serialize};
@@ -33,15 +34,16 @@ async fn get_cloud_client() -> Arc<CloudClient> {
 
 #[tauri::command]
 pub async fn check_auth_status() -> Result<AgentStatus, String> {
+    let devices = get_known_devices().await;
     match check_auth().await {
         Ok(status) => Ok(AgentStatus {
             authenticated: status.authenticated,
             user_email: status.user_email,
             network_id: status.network_id,
             network_name: status.network_name,
-            last_scan: None,
+            last_scan: get_last_scan_time(),
             next_scan: None,
-            device_count: None,
+            device_count: Some(devices.len()),
         }),
         Err(e) => Err(e.to_string()),
     }
@@ -50,15 +52,22 @@ pub async fn check_auth_status() -> Result<AgentStatus, String> {
 #[tauri::command]
 pub async fn start_login_flow() -> Result<AgentStatus, String> {
     match start_login().await {
-        Ok(status) => Ok(AgentStatus {
-            authenticated: status.authenticated,
-            user_email: status.user_email,
-            network_id: status.network_id,
-            network_name: status.network_name,
-            last_scan: None,
-            next_scan: None,
-            device_count: None,
-        }),
+        Ok(status) => {
+            // Start background scanning if authenticated
+            if status.authenticated {
+                tracing::info!("Login successful, starting background scanning");
+                ensure_background_scanning().await;
+            }
+            Ok(AgentStatus {
+                authenticated: status.authenticated,
+                user_email: status.user_email,
+                network_id: status.network_id,
+                network_name: status.network_name,
+                last_scan: get_last_scan_time(),
+                next_scan: None,
+                device_count: None,
+            })
+        }
         Err(e) => Err(e.to_string()),
     }
 }
@@ -71,12 +80,18 @@ pub async fn logout() -> Result<(), String> {
 #[tauri::command]
 pub async fn scan_network() -> Result<Vec<Device>, String> {
     let devices = scanner_scan_network().await.map_err(|e| format!("{}", e))?;
-    
+
     tracing::info!("Scan complete, found {} devices", devices.len());
-    
+
+    // Record scan time
+    record_scan_time();
+
     // Update known devices for health checks
     update_known_devices(devices.clone()).await;
-    
+
+    // Persist to disk
+    persist_state().await;
+
     // Upload to cloud if authenticated
     match check_auth().await {
         Ok(status) if status.authenticated => {
@@ -97,23 +112,23 @@ pub async fn scan_network() -> Result<Vec<Device>, String> {
             tracing::warn!("Failed to check auth status: {}", e);
         }
     }
-    
+
     Ok(devices)
 }
 
 #[tauri::command]
 pub async fn get_agent_status() -> Result<AgentStatus, String> {
     let status = check_auth().await.map_err(|e| e.to_string())?;
-    let _interval = get_scan_interval();
-    
+    let devices = get_known_devices().await;
+
     Ok(AgentStatus {
         authenticated: status.authenticated,
         user_email: status.user_email,
         network_id: status.network_id,
         network_name: status.network_name,
-        last_scan: None,
+        last_scan: get_last_scan_time(),
         next_scan: None,
-        device_count: None,
+        device_count: Some(devices.len()),
     })
 }
 

@@ -5,18 +5,25 @@ mod auth;
 mod cli;
 mod cloud;
 mod commands;
+mod persistence;
 mod platform;
 mod scanner;
 mod scheduler;
-// mod tray; // TODO: Re-enable when system tray plugin is available
+mod tray;
 
+use tauri::Manager;
 use tracing::info;
 
 fn main() {
     // Check for CLI mode
     let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 && (args[1] == "--headless" || args[1] == "login" || 
-        args[1] == "scan" || args[1] == "status" || args[1] == "logout") {
+    if args.len() > 1
+        && (args[1] == "--headless"
+            || args[1] == "login"
+            || args[1] == "scan"
+            || args[1] == "status"
+            || args[1] == "logout")
+    {
         // Run in CLI mode
         tauri::async_runtime::block_on(cli::run_cli());
         return;
@@ -33,11 +40,28 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        // .plugin(tauri_plugin_notification::init()) // TODO: Re-enable when notifications are implemented
         .setup(|app| {
-            // Initialize scheduler
+            // Initialize scheduler (loads persisted state)
             scheduler::init(app.handle().clone());
-            
+
+            // Create system tray
+            if let Err(e) = tray::create_tray(app.handle()) {
+                tracing::error!("Failed to create system tray: {}", e);
+            }
+
+            // Set up close handler to minimize to tray instead of quitting
+            let main_window = app.get_webview_window("main").unwrap();
+            let window_clone = main_window.clone();
+            main_window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // Prevent the window from closing
+                    api.prevent_close();
+                    // Hide instead
+                    let _ = window_clone.hide();
+                    tracing::info!("Window hidden to tray");
+                }
+            });
+
             // Check if user is authenticated on startup
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

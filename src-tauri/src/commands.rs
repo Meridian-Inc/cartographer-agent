@@ -1,6 +1,6 @@
 use crate::auth::{check_auth, logout as auth_logout, start_login};
 use crate::cloud::CloudClient;
-use crate::scanner::{ping_device, scan_network as scanner_scan_network, Device, ScanResult};
+use crate::scanner::{check_device_reachable, get_arp_table_ips, ping_device, scan_network as scanner_scan_network, Device, ScanResult};
 use crate::scheduler::{
     ensure_background_scanning, get_known_devices, get_last_scan_time, get_scan_interval,
     persist_state, record_scan_time, set_scan_interval as scheduler_set_scan_interval,
@@ -187,33 +187,38 @@ pub struct HealthCheckStatus {
 #[tauri::command]
 pub async fn run_health_check() -> Result<HealthCheckStatus, String> {
     let devices = get_known_devices().await;
-    
+
     if devices.is_empty() {
         return Err("No devices to check. Run a scan first.".to_string());
     }
-    
+
     tracing::info!("Running manual health check on {} devices", devices.len());
-    
-    // Ping all known devices
+
+    // Get current ARP table for fallback checking
+    // This helps detect devices that block ICMP but are still on the network
+    let arp_ips = get_arp_table_ips().await;
+    tracing::debug!("ARP table has {} entries for fallback", arp_ips.len());
+
+    // Check all known devices using ping with ARP fallback
     let mut health_results = Vec::new();
     for device in &devices {
-        let result = ping_device(&device.ip).await;
+        let result = check_device_reachable(&device.ip, &arp_ips).await;
         health_results.push(DeviceHealthResult {
             ip: device.ip.clone(),
             reachable: result.is_ok(),
             response_time_ms: result.ok(),
         });
     }
-    
+
     let healthy_count = health_results.iter().filter(|r| r.reachable).count();
     let unreachable_count = health_results.len() - healthy_count;
-    
+
     tracing::info!(
         "Health check complete: {} healthy, {} unreachable",
         healthy_count,
         unreachable_count
     );
-    
+
     // Upload to cloud if authenticated
     let mut synced = false;
     match check_auth().await {
@@ -236,7 +241,7 @@ pub async fn run_health_check() -> Result<HealthCheckStatus, String> {
             tracing::warn!("Failed to check auth status: {}", e);
         }
     }
-    
+
     Ok(HealthCheckStatus {
         total_devices: health_results.len(),
         healthy_devices: healthy_count,

@@ -1,7 +1,7 @@
 use crate::auth::check_auth;
 use crate::cloud::CloudClient;
 use crate::persistence;
-use crate::scanner::{ping_device, scan_network, Device, ScanResult};
+use crate::scanner::{check_device_reachable, get_arp_table_ips, ping_device, scan_network, Device, ScanResult};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
@@ -177,10 +177,15 @@ async fn run_health_checks_and_upload(app: &AppHandle) {
 
     tracing::debug!("Running health checks on {} devices", devices.len());
 
-    // Ping all known devices
+    // Get current ARP table for fallback checking
+    // This helps detect devices that block ICMP but are still on the network
+    let arp_ips = get_arp_table_ips().await;
+    tracing::debug!("ARP table has {} entries for fallback", arp_ips.len());
+
+    // Check all known devices using ping with ARP fallback
     let mut health_results = Vec::new();
     for device in &devices {
-        let result = ping_device(&device.ip).await;
+        let result = check_device_reachable(&device.ip, &arp_ips).await;
         health_results.push(DeviceHealthResult {
             ip: device.ip.clone(),
             reachable: result.is_ok(),

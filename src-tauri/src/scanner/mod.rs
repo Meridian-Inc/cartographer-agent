@@ -3,23 +3,44 @@ mod ping;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::process::Command;
 use std::time::Instant;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-/// Windows flag to hide console window when spawning processes
+/// Windows flags to hide console window when spawning processes
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Create a Command that hides the console window on Windows.
 /// On other platforms, this just creates a normal Command.
+///
+/// IMPORTANT: Always use this function instead of Command::new() directly
+/// to prevent console windows from flashing on Windows.
 pub fn hidden_command(program: &str) -> Command {
     let mut cmd = Command::new(program);
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
     cmd
+}
+
+/// Create a hidden command from within a non-async context (like spawn_blocking).
+/// This is needed because hidden_command imports aren't always available in closures.
+/// 
+/// pub(crate) so it can be used in submodules like ping.rs
+#[cfg(target_os = "windows")]
+pub(crate) fn hidden_command_sync(program: &str) -> Command {
+    use std::os::windows::process::CommandExt;
+    let mut cmd = Command::new(program);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn hidden_command_sync(program: &str) -> Command {
+    Command::new(program)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,7 +235,8 @@ async fn resolve_hostname_fast(ip: &str) -> Option<String> {
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                 {
                     // Use getent or host command for reverse lookup
-                    if let Ok(output) = std::process::Command::new("getent")
+                    // Use hidden_command_sync for consistency across platforms
+                    if let Ok(output) = hidden_command_sync("getent")
                         .args(["hosts", &ip_owned])
                         .output()
                     {
@@ -233,7 +255,8 @@ async fn resolve_hostname_fast(ip: &str) -> Option<String> {
                 #[cfg(target_os = "windows")]
                 {
                     // Use nslookup for reverse DNS (much faster than nbtstat)
-                    if let Ok(output) = std::process::Command::new("nslookup")
+                    // Must use hidden_command_sync to prevent console window flash
+                    if let Ok(output) = hidden_command_sync("nslookup")
                         .arg(&ip_owned)
                         .output()
                     {
@@ -482,57 +505,139 @@ async fn resolve_hostname(ip: &str) -> Option<String> {
 
 /// Ping a single device and return response time in ms if successful.
 /// Used for health checks on known devices.
+///
+/// Uses spawn_blocking to avoid blocking the tokio runtime with the
+/// synchronous ping command execution.
 pub async fn ping_device(ip: &str) -> Result<f64> {
-    let start = Instant::now();
-    
-    #[cfg(target_os = "windows")]
-    let output = hidden_command("ping")
-        .args(["-n", "1", "-w", "2000", ip])
-        .output()
-        .context("Failed to execute ping command")?;
-    
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    let output = hidden_command("ping")
-        .args(["-c", "1", "-W", "2", ip])
-        .output()
-        .context("Failed to execute ping command")?;
-    
-    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-    let output = {
-        return Err(anyhow::anyhow!("Unsupported platform"));
-    };
-    
-    if !output.status.success() {
-        return Err(anyhow::anyhow!("Host unreachable"));
-    }
-    
-    let elapsed = start.elapsed();
-    let default_time = elapsed.as_secs_f64() * 1000.0;
-    
-    // Try to parse actual ping time from output
-    let output_str = String::from_utf8_lossy(&output.stdout);
-    let ping_time = parse_ping_time(&output_str).unwrap_or(default_time);
-    
-    Ok(ping_time)
+    let ip_owned = ip.to_string();
+
+    // Run the blocking ping command on a separate thread pool
+    let result = tokio::task::spawn_blocking(move || {
+        let start = Instant::now();
+
+        // Use hidden_command_sync inside spawn_blocking to ensure
+        // CREATE_NO_WINDOW flag is applied (prevents console window flash on Windows)
+        #[cfg(target_os = "windows")]
+        let output = hidden_command_sync("ping")
+            .args(["-n", "1", "-w", "2000", &ip_owned])
+            .output();
+
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let output = hidden_command_sync("ping")
+            .args(["-c", "1", "-W", "2", &ip_owned])
+            .output();
+
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+        let output: std::io::Result<std::process::Output> = {
+            return Err(anyhow::anyhow!("Unsupported platform"));
+        };
+
+        match output {
+            Ok(output) => {
+                let elapsed = start.elapsed();
+                let default_time = elapsed.as_secs_f64() * 1000.0;
+                let output_str = String::from_utf8_lossy(&output.stdout);
+
+                // On Windows, check both exit code AND output content
+                // Some Windows configurations return exit code 0 even for timeouts
+                #[cfg(target_os = "windows")]
+                {
+                    // Check for failure indicators in output
+                    let output_lower = output_str.to_lowercase();
+                    if output_lower.contains("request timed out")
+                        || output_lower.contains("destination host unreachable")
+                        || output_lower.contains("transmit failed")
+                        || output_lower.contains("general failure")
+                    {
+                        return Err(anyhow::anyhow!("Host unreachable"));
+                    }
+
+                    // Also check exit code
+                    if !output.status.success() {
+                        return Err(anyhow::anyhow!("Host unreachable (exit code)"));
+                    }
+
+                    // Must have "Reply from" to be considered successful
+                    if !output_lower.contains("reply from") {
+                        return Err(anyhow::anyhow!("No reply received"));
+                    }
+                }
+
+                #[cfg(not(target_os = "windows"))]
+                {
+                    if !output.status.success() {
+                        return Err(anyhow::anyhow!("Host unreachable"));
+                    }
+                }
+
+                // Parse actual ping time from output
+                let ping_time = parse_ping_time(&output_str).unwrap_or(default_time);
+                Ok(ping_time)
+            }
+            Err(e) => Err(anyhow::anyhow!("Failed to execute ping: {}", e)),
+        }
+    })
+    .await
+    .context("Ping task panicked")?;
+
+    result
 }
 
 /// Parse ping response time from command output
 fn parse_ping_time(output: &str) -> Option<f64> {
     // Windows format: "Reply from X.X.X.X: bytes=32 time=1ms TTL=64"
     // Linux/macOS format: "64 bytes from X.X.X.X: icmp_seq=1 ttl=64 time=1.23 ms"
-    
+
     for word in output.split_whitespace() {
         if word.starts_with("time=") || word.starts_with("time<") {
             let time_str = word
                 .trim_start_matches("time=")
                 .trim_start_matches("time<")
                 .trim_end_matches("ms");
-            
+
             if let Ok(time) = time_str.parse::<f64>() {
                 return Some(time);
             }
         }
     }
-    
+
     None
+}
+
+/// Get a set of all IP addresses currently in the ARP table.
+/// This is useful for checking if devices that don't respond to ping
+/// are still on the network.
+pub async fn get_arp_table_ips() -> HashSet<String> {
+    match arp::get_arp_table().await {
+        Ok(devices) => devices.into_iter().map(|d| d.ip).collect(),
+        Err(_) => HashSet::new(),
+    }
+}
+
+/// Check if a device is reachable, with ARP table fallback.
+///
+/// First tries ICMP ping. If that fails, checks if the device is in the
+/// ARP table (indicating recent network activity). This handles devices
+/// that have firewalls blocking ICMP.
+///
+/// Returns Ok(response_time_ms) if ping succeeded, or Ok(0.0) if found in ARP,
+/// or Err if device is not reachable by either method.
+pub async fn check_device_reachable(ip: &str, arp_ips: &HashSet<String>) -> Result<f64> {
+    // First try ICMP ping
+    match ping_device(ip).await {
+        Ok(time) => Ok(time),
+        Err(_) => {
+            // Ping failed, check ARP table as fallback
+            if arp_ips.contains(ip) {
+                tracing::debug!(
+                    "Device {} doesn't respond to ICMP but is in ARP table",
+                    ip
+                );
+                // Return 0.0 to indicate "reachable but no ping time"
+                Ok(0.0)
+            } else {
+                Err(anyhow::anyhow!("Device not reachable"))
+            }
+        }
+    }
 }

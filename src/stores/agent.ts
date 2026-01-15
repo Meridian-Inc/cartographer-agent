@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 export interface Device {
   ip: string
@@ -19,6 +20,22 @@ export interface AgentStatus {
   deviceCount?: number
 }
 
+export type ScanStage =
+  | 'detecting_network'
+  | 'reading_arp'
+  | 'ping_sweep'
+  | 'resolving_hostnames'
+  | 'complete'
+  | 'failed'
+
+export interface ScanProgress {
+  stage: ScanStage
+  message: string
+  percent: number | null
+  devicesFound: number | null
+  elapsedSecs: number
+}
+
 export const useAgentStore = defineStore('agent', () => {
   const status = ref<AgentStatus>({
     authenticated: false
@@ -27,8 +44,34 @@ export const useAgentStore = defineStore('agent', () => {
   const devices = ref<Device[]>([])
   const scanning = ref(false)
   const scanInterval = ref(5) // minutes
+  const scanProgress = ref<ScanProgress | null>(null)
+  
+  // Event listener cleanup
+  let progressUnlisten: UnlistenFn | null = null
 
   const isAuthenticated = computed(() => status.value.authenticated)
+
+  // Initialize event listeners
+  async function initEventListeners() {
+    // Listen for scan progress events
+    progressUnlisten = await listen<ScanProgress>('scan-progress', (event) => {
+      scanProgress.value = event.payload
+      // Clear progress when scan completes
+      if (event.payload.stage === 'complete' || event.payload.stage === 'failed') {
+        setTimeout(() => {
+          scanProgress.value = null
+        }, 3000) // Keep final message visible for 3 seconds
+      }
+    })
+  }
+
+  // Cleanup event listeners
+  function cleanupEventListeners() {
+    if (progressUnlisten) {
+      progressUnlisten()
+      progressUnlisten = null
+    }
+  }
 
   async function checkAuth() {
     try {
@@ -65,6 +108,7 @@ export const useAgentStore = defineStore('agent', () => {
 
   async function scanNow() {
     scanning.value = true
+    scanProgress.value = null
     try {
       const result = await invoke<Device[]>('scan_network')
       devices.value = result
@@ -97,18 +141,23 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
+  // Initialize listeners on store creation
+  initEventListeners()
+
   return {
     status,
     devices,
     scanning,
     scanInterval,
+    scanProgress,
     isAuthenticated,
     checkAuth,
     login,
     logout,
     scanNow,
     refreshStatus,
-    setScanInterval
+    setScanInterval,
+    cleanupEventListeners
   }
 })
 

@@ -50,19 +50,42 @@ pub async fn run_cli() {
         }
         Some(Commands::Scan) => {
             println!("Scanning network...");
-            // Use commands::scan_network which also uploads to cloud
-            match crate::commands::scan_network().await {
-                Ok(devices) => {
-                    println!("✓ Found {} devices", devices.len());
-                    for device in &devices {
-                        println!("  - {} ({:.1}ms)", device.ip, 
-                            device.response_time_ms.unwrap_or(0.0));
+            // Use scanner directly since CLI doesn't have AppHandle for events
+            // Print progress to stdout instead
+            let progress_callback: Box<dyn Fn(crate::scanner::ScanProgress) + Send + Sync> =
+                Box::new(|progress| {
+                    // Print progress to console
+                    if let Some(pct) = progress.percent {
+                        println!("  [{:>3}%] {}", pct, progress.message);
+                    } else {
+                        println!("  {}", progress.message);
                     }
-                    // Check if we're authenticated to report upload status
+                });
+
+            match crate::scanner::scan_network_with_progress(Some(progress_callback)).await {
+                Ok(scan_result) => {
+                    println!("✓ Found {} devices", scan_result.devices.len());
+                    for device in &scan_result.devices {
+                        let hostname = device.hostname.as_deref().unwrap_or("-");
+                        println!(
+                            "  - {} ({:.1}ms) {}",
+                            device.ip,
+                            device.response_time_ms.unwrap_or(0.0),
+                            hostname
+                        );
+                    }
+                    // Upload to cloud if authenticated
                     if let Ok(status) = crate::auth::check_auth().await {
                         if status.authenticated {
-                            println!("✓ Scan synced to cloud network '{}'", 
-                                status.network_name.unwrap_or_else(|| "Unknown".to_string()));
+                            let client = crate::cloud::CloudClient::new();
+                            if let Err(e) = client.upload_scan_result(&scan_result).await {
+                                eprintln!("⚠ Failed to upload: {}", e);
+                            } else {
+                                println!(
+                                    "✓ Scan synced to cloud network '{}'",
+                                    status.network_name.unwrap_or_else(|| "Unknown".to_string())
+                                );
+                            }
                         } else {
                             println!("⚠ Not signed in - scan not uploaded to cloud");
                         }

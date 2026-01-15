@@ -66,14 +66,78 @@ pub struct ScanResult {
     pub network_info: NetworkInfo,
 }
 
+/// Progress updates during network scanning
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanProgress {
+    /// Current stage of the scan
+    pub stage: ScanStage,
+    /// Human-readable message describing current activity
+    pub message: String,
+    /// Progress percentage (0-100), if known
+    pub percent: Option<u8>,
+    /// Number of devices found so far
+    pub devices_found: Option<usize>,
+    /// Elapsed time in seconds
+    pub elapsed_secs: f64,
+}
+
+/// Stages of the network scan process
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanStage {
+    /// Detecting network configuration
+    DetectingNetwork,
+    /// Reading ARP table for known devices
+    ReadingArp,
+    /// Performing ping sweep to discover devices
+    PingSweep,
+    /// Resolving hostnames for discovered devices
+    ResolvingHostnames,
+    /// Scan complete
+    Complete,
+    /// Scan failed
+    Failed,
+}
+
+/// Callback type for scan progress updates
+pub type ProgressCallback = Box<dyn Fn(ScanProgress) + Send + Sync>;
+
 /// Scan the local network and return devices with network information.
 /// This includes gateway detection and fast hostname resolution.
 pub async fn scan_network() -> Result<ScanResult> {
-    use std::time::Instant;
+    scan_network_with_progress(None).await
+}
+
+/// Scan the local network with progress callbacks.
+/// This includes gateway detection and fast hostname resolution.
+pub async fn scan_network_with_progress(
+    on_progress: Option<ProgressCallback>,
+) -> Result<ScanResult> {
     let scan_start = Instant::now();
 
-    // Get network interface, subnet, and gateway
-    tracing::info!("Detecting network configuration...");
+    // Helper to emit progress
+    let emit_progress = |stage: ScanStage, message: &str, percent: Option<u8>, devices: Option<usize>| {
+        let progress = ScanProgress {
+            stage,
+            message: message.to_string(),
+            percent,
+            devices_found: devices,
+            elapsed_secs: scan_start.elapsed().as_secs_f64(),
+        };
+        tracing::info!("[Scan] {}", message);
+        if let Some(ref callback) = on_progress {
+            callback(progress);
+        }
+    };
+
+    // Stage 1: Detect network configuration
+    emit_progress(
+        ScanStage::DetectingNetwork,
+        "Detecting network configuration...",
+        Some(5),
+        None,
+    );
     let network_info = get_full_network_info().await?;
 
     tracing::info!(
@@ -83,13 +147,31 @@ pub async fn scan_network() -> Result<ScanResult> {
         network_info.gateway_ip
     );
 
-    // First, get devices from the ARP table (already known devices)
-    tracing::info!("Reading ARP table...");
+    // Stage 2: Read ARP table
+    emit_progress(
+        ScanStage::ReadingArp,
+        "Reading known devices from ARP table...",
+        Some(10),
+        None,
+    );
     let mut devices = arp::get_arp_table().await.unwrap_or_default();
-    tracing::info!("ARP table: {} known devices", devices.len());
+    let arp_count = devices.len();
 
-    // Then do a ping sweep to discover new devices
-    tracing::info!("Starting ping sweep (this may take 10-20 seconds)...");
+    emit_progress(
+        ScanStage::ReadingArp,
+        &format!("Found {} devices in ARP cache", arp_count),
+        Some(15),
+        Some(arp_count),
+    );
+
+    // Stage 3: Ping sweep
+    emit_progress(
+        ScanStage::PingSweep,
+        "Discovering devices on network (ping sweep)...",
+        Some(20),
+        Some(devices.len()),
+    );
+
     let ping_start = Instant::now();
     match ping::ping_sweep(&network_info.subnet).await {
         Ok(pinged_devices) => {
@@ -108,31 +190,62 @@ pub async fn scan_network() -> Result<ScanResult> {
                     devices.push(pinged);
                 }
             }
+
+            emit_progress(
+                ScanStage::PingSweep,
+                &format!("Discovered {} total devices", devices.len()),
+                Some(50),
+                Some(devices.len()),
+            );
         }
         Err(e) => {
             tracing::warn!("Ping sweep failed: {}", e);
+            emit_progress(
+                ScanStage::PingSweep,
+                &format!("Ping sweep had issues: {}", e),
+                Some(50),
+                Some(devices.len()),
+            );
         }
     }
 
-    // Fast hostname resolution using DNS (skip slow NetBIOS)
+    // Stage 4: Hostname resolution
     if !devices.is_empty() {
-        tracing::info!("Resolving hostnames for {} devices...", devices.len());
+        emit_progress(
+            ScanStage::ResolvingHostnames,
+            &format!("Resolving hostnames for {} devices (may take a moment)...", devices.len()),
+            Some(55),
+            Some(devices.len()),
+        );
+
         let dns_start = Instant::now();
         resolve_hostnames_fast(&mut devices).await;
         let resolved_count = devices.iter().filter(|d| d.hostname.is_some()).count();
-        tracing::info!(
-            "Hostname resolution: {}/{} resolved in {:.1}s",
-            resolved_count,
-            devices.len(),
-            dns_start.elapsed().as_secs_f64()
+
+        emit_progress(
+            ScanStage::ResolvingHostnames,
+            &format!(
+                "Resolved {}/{} hostnames in {:.1}s",
+                resolved_count,
+                devices.len(),
+                dns_start.elapsed().as_secs_f64()
+            ),
+            Some(95),
+            Some(devices.len()),
         );
     }
 
+    // Stage 5: Complete
     let total_duration = scan_start.elapsed();
-    tracing::info!(
-        "Scan complete: {} devices found in {:.1}s",
-        devices.len(),
-        total_duration.as_secs_f64()
+    emit_progress(
+        ScanStage::Complete,
+        &format!(
+            "Scan complete: {} devices found in {:.1}s",
+            devices.len(),
+            total_duration.as_secs_f64()
+        ),
+        Some(100),
+        Some(devices.len()),
     );
 
     Ok(ScanResult {
@@ -182,8 +295,14 @@ async fn resolve_hostnames_fast(devices: &mut [Device]) {
 
     // High parallelism since DNS lookups are mostly I/O bound
     const BATCH_SIZE: usize = 32;
-    // Short timeout - if DNS doesn't respond quickly, skip it
-    const TIMEOUT_MS: u64 = 500;
+
+    // Timeout varies by platform:
+    // - Windows uses nbtstat as fallback which is slower (needs ~2s for NetBIOS timeout)
+    // - Linux/macOS DNS is typically faster
+    #[cfg(target_os = "windows")]
+    const TIMEOUT_MS: u64 = 3000;
+    #[cfg(not(target_os = "windows"))]
+    const TIMEOUT_MS: u64 = 1500;
 
     for chunk in devices.chunks_mut(BATCH_SIZE) {
         let futures: Vec<_> = chunk
@@ -234,10 +353,48 @@ async fn resolve_hostname_fast(ip: &str) -> Option<String> {
                 // so we need to use getnameinfo or similar
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                 {
-                    // Use getent or host command for reverse lookup
-                    // Use hidden_command_sync for consistency across platforms
+                    // Try multiple methods for hostname resolution on Linux/macOS:
+                    // 1. getent - uses system resolver (includes /etc/hosts, DNS, mDNS if configured)
+                    // 2. host - reverse DNS lookup
+                    // 3. avahi-resolve (Linux) / dns-sd (macOS) - mDNS/Bonjour
+
+                    // Method 1: getent hosts (most comprehensive, uses NSS)
                     if let Ok(output) = hidden_command_sync("getent")
                         .args(["hosts", &ip_owned])
+                        .output()
+                    {
+                        if output.status.success() {
+                            let out = String::from_utf8_lossy(&output.stdout);
+                            // Format: "192.168.1.1    hostname.local"
+                            if let Some(hostname) = out.split_whitespace().nth(1) {
+                                if !hostname.is_empty() {
+                                    return Some(hostname.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    // Method 2: host command for reverse DNS
+                    if let Ok(output) = hidden_command_sync("host")
+                        .arg(&ip_owned)
+                        .output()
+                    {
+                        if output.status.success() {
+                            let out = String::from_utf8_lossy(&output.stdout);
+                            // Parse "X.X.X.X.in-addr.arpa domain name pointer hostname."
+                            if let Some(hostname) = out.split("pointer").nth(1) {
+                                let hostname = hostname.trim().trim_end_matches('.');
+                                if !hostname.is_empty() {
+                                    return Some(hostname.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    // Method 3: Try avahi-resolve on Linux for mDNS (.local domains)
+                    #[cfg(target_os = "linux")]
+                    if let Ok(output) = hidden_command_sync("avahi-resolve")
+                        .args(["-a", &ip_owned])
                         .output()
                     {
                         if output.status.success() {
@@ -254,8 +411,11 @@ async fn resolve_hostname_fast(ip: &str) -> Option<String> {
 
                 #[cfg(target_os = "windows")]
                 {
-                    // Use nslookup for reverse DNS (much faster than nbtstat)
-                    // Must use hidden_command_sync to prevent console window flash
+                    // Try multiple methods for hostname resolution on Windows:
+                    // 1. nslookup - for devices with proper DNS PTR records
+                    // 2. nbtstat - for Windows devices via NetBIOS (most home networks)
+
+                    // Method 1: nslookup for reverse DNS
                     if let Ok(output) = hidden_command_sync("nslookup")
                         .arg(&ip_owned)
                         .output()
@@ -271,6 +431,27 @@ async fn resolve_hostname_fast(ip: &str) -> Option<String> {
                                         if !hostname.is_empty() && !hostname.contains(&ip_owned) {
                                             return Some(hostname.to_string());
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Method 2: nbtstat for NetBIOS names (works for most Windows devices)
+                    // This is slower but works on typical home networks without DNS
+                    if let Ok(output) = hidden_command_sync("nbtstat")
+                        .args(["-A", &ip_owned])
+                        .output()
+                    {
+                        let out = String::from_utf8_lossy(&output.stdout);
+                        // Look for lines with "<00>" and "UNIQUE" which indicate the computer name
+                        // Format: "COMPUTER-NAME   <00>  UNIQUE      Registered"
+                        for line in out.lines() {
+                            let trimmed = line.trim();
+                            if trimmed.contains("<00>") && trimmed.contains("UNIQUE") {
+                                if let Some(name) = trimmed.split_whitespace().next() {
+                                    if !name.is_empty() {
+                                        return Some(name.to_string());
                                     }
                                 }
                             }

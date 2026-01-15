@@ -1,13 +1,16 @@
 use crate::auth::{check_auth, logout as auth_logout, start_login};
 use crate::cloud::CloudClient;
-use crate::scanner::{check_device_reachable, get_arp_table_ips, scan_network as scanner_scan_network, Device};
+use crate::scanner::{
+    check_device_reachable, get_arp_table_ips, scan_network_with_progress, Device, ScanProgress,
+};
 use crate::scheduler::{
-    ensure_background_scanning, get_known_devices, get_last_scan_time, get_scan_interval,
+    ensure_background_scanning, get_known_devices, get_last_scan_time,
     persist_state, record_scan_time, set_scan_interval as scheduler_set_scan_interval,
     update_known_devices, DeviceHealthResult,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -77,9 +80,22 @@ pub async fn logout() -> Result<(), String> {
     auth_logout().await.map_err(|e| e.to_string())
 }
 
+/// Event name for scan progress updates
+pub const SCAN_PROGRESS_EVENT: &str = "scan-progress";
+
 #[tauri::command]
-pub async fn scan_network() -> Result<Vec<Device>, String> {
-    let scan_result = scanner_scan_network().await.map_err(|e| format!("{}", e))?;
+pub async fn scan_network(app: AppHandle) -> Result<Vec<Device>, String> {
+    // Create progress callback that emits Tauri events
+    let app_clone = app.clone();
+    let progress_callback: Box<dyn Fn(ScanProgress) + Send + Sync> = Box::new(move |progress| {
+        if let Err(e) = app_clone.emit(SCAN_PROGRESS_EVENT, &progress) {
+            tracing::warn!("Failed to emit scan progress event: {}", e);
+        }
+    });
+
+    let scan_result = scan_network_with_progress(Some(progress_callback))
+        .await
+        .map_err(|e| format!("{}", e))?;
 
     tracing::info!(
         "Scan complete, found {} devices (gateway: {:?})",

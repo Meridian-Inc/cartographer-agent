@@ -72,8 +72,33 @@
           </div>
         </div>
 
+        <!-- Scan Progress -->
+        <div v-if="scanProgress" class="mb-4 p-4 bg-indigo-50 border border-indigo-200 rounded-lg">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-medium text-indigo-900">
+              {{ getScanStageLabel(scanProgress.stage) }}
+            </span>
+            <span v-if="scanProgress.percent !== null" class="text-xs text-indigo-600">
+              {{ scanProgress.percent }}%
+            </span>
+          </div>
+          <div class="w-full bg-indigo-200 rounded-full h-2 mb-2">
+            <div 
+              class="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+              :style="{ width: `${scanProgress.percent || 0}%` }"
+            ></div>
+          </div>
+          <p class="text-xs text-indigo-700">{{ scanProgress.message }}</p>
+          <div class="flex justify-between text-xs text-indigo-500 mt-1">
+            <span v-if="scanProgress.devicesFound !== null">
+              {{ scanProgress.devicesFound }} device{{ scanProgress.devicesFound !== 1 ? 's' : '' }} found
+            </span>
+            <span>{{ scanProgress.elapsedSecs.toFixed(1) }}s elapsed</span>
+          </div>
+        </div>
+
         <!-- Health Check Results -->
-        <div v-if="healthStatus" class="mb-4 p-3 bg-gray-50 rounded-lg text-sm">
+        <div v-if="healthStatus && !scanProgress" class="mb-4 p-3 bg-gray-50 rounded-lg text-sm">
           <div class="flex items-center justify-between">
             <div class="flex gap-4">
               <span class="text-green-600">
@@ -107,7 +132,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useAgentStore } from '@/stores/agent'
+import { useAgentStore, type ScanStage } from '@/stores/agent'
 import DeviceList from '@/components/DeviceList.vue'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -126,6 +151,20 @@ const healthStatus = ref<HealthCheckStatus | null>(null)
 const status = computed(() => agentStore.status)
 const devices = computed(() => agentStore.devices)
 const scanning = computed(() => agentStore.scanning)
+const scanProgress = computed(() => agentStore.scanProgress)
+
+// Get human-readable label for scan stage
+function getScanStageLabel(stage: ScanStage): string {
+  const labels: Record<ScanStage, string> = {
+    detecting_network: '🔍 Detecting Network',
+    reading_arp: '📋 Reading Known Devices',
+    ping_sweep: '📡 Discovering Devices',
+    resolving_hostnames: '🏷️ Resolving Hostnames',
+    complete: '✓ Scan Complete',
+    failed: '✗ Scan Failed'
+  }
+  return labels[stage] || stage
+}
 
 // Computed last scan time that updates when status changes
 const lastScanTime = computed(() => {

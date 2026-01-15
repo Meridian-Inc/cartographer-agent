@@ -32,7 +32,7 @@ pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 // Trigger scan via command
                 let app_clone = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = crate::commands::scan_network().await {
+                    if let Err(e) = crate::commands::scan_network(app_clone).await {
                         tracing::error!("Tray scan failed: {}", e);
                     }
                 });

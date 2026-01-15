@@ -1,7 +1,8 @@
 use crate::auth::check_auth;
 use crate::cloud::CloudClient;
+use crate::commands::SCAN_PROGRESS_EVENT;
 use crate::persistence;
-use crate::scanner::{check_device_reachable, get_arp_table_ips, scan_network, Device};
+use crate::scanner::{check_device_reachable, get_arp_table_ips, scan_network_with_progress, Device, ScanProgress};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
@@ -127,7 +128,15 @@ pub fn is_background_running() -> bool {
 async fn run_scan_and_upload(app: &AppHandle) {
     tracing::info!("Running network scan");
 
-    match scan_network().await {
+    // Create progress callback that emits Tauri events
+    let app_clone = app.clone();
+    let progress_callback: Box<dyn Fn(ScanProgress) + Send + Sync> = Box::new(move |progress| {
+        if let Err(e) = app_clone.emit(SCAN_PROGRESS_EVENT, &progress) {
+            tracing::warn!("Failed to emit scan progress event: {}", e);
+        }
+    });
+
+    match scan_network_with_progress(Some(progress_callback)).await {
         Ok(scan_result) => {
             let device_count = scan_result.devices.len();
             tracing::info!(

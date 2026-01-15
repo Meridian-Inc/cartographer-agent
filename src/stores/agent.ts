@@ -12,7 +12,7 @@ export interface Device {
 export interface AgentStatus {
   authenticated: boolean
   userEmail?: string
-  networkId?: number
+  networkId?: string
   networkName?: string
   lastScan?: string
   nextScan?: string

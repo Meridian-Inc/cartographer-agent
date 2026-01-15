@@ -62,11 +62,15 @@
         <div class="space-y-3 text-sm">
           <div>
             <span class="text-gray-600">Email:</span>
-            <span class="ml-2 text-gray-900">{{ status.userEmail || 'Unknown' }}</span>
+            <span class="ml-2 text-gray-900">{{ status.userEmail || 'Not connected' }}</span>
           </div>
           <div>
-            <span class="text-gray-600">Agent ID:</span>
-            <span class="ml-2 font-mono text-gray-900">{{ status.agentId || 'Unknown' }}</span>
+            <span class="text-gray-600">Network:</span>
+            <span class="ml-2 text-gray-900">{{ status.networkName || 'Not connected' }}</span>
+          </div>
+          <div v-if="status.networkId">
+            <span class="text-gray-600">Network ID:</span>
+            <span class="ml-2 font-mono text-gray-900 text-xs">{{ status.networkId }}</span>
           </div>
         </div>
         <button

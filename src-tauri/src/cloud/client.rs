@@ -165,7 +165,7 @@ impl CloudClient {
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
         
         // Navigate to the core app with network context
-        let url = format!("https://cartographer.network/app/?network={}", creds.network_id);
+        let url = format!("https://cartographer.network/app/network/{}", creds.network_id);
         webbrowser::open(&url)
             .context("Failed to open dashboard in browser")
     }

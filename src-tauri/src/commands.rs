@@ -1,6 +1,6 @@
 use crate::auth::{check_auth, logout as auth_logout, start_login};
 use crate::cloud::CloudClient;
-use crate::scanner::{check_device_reachable, get_arp_table_ips, ping_device, scan_network as scanner_scan_network, Device, ScanResult};
+use crate::scanner::{check_device_reachable, get_arp_table_ips, scan_network as scanner_scan_network, Device};
 use crate::scheduler::{
     ensure_background_scanning, get_known_devices, get_last_scan_time, get_scan_interval,
     persist_state, record_scan_time, set_scan_interval as scheduler_set_scan_interval,

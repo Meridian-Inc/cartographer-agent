@@ -1,7 +1,7 @@
 use crate::auth::check_auth;
 use crate::cloud::CloudClient;
 use crate::persistence;
-use crate::scanner::{check_device_reachable, get_arp_table_ips, ping_device, scan_network, Device, ScanResult};
+use crate::scanner::{check_device_reachable, get_arp_table_ips, scan_network, Device};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};

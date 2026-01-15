@@ -2,7 +2,7 @@
 //! No special drivers or libraries required
 
 use crate::scanner::{hidden_command_sync, Device};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ipnetwork::IpNetwork;
 use std::time::Instant;
 

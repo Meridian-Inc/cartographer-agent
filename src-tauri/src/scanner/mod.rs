@@ -46,34 +46,44 @@ pub struct ScanResult {
 }
 
 /// Scan the local network and return devices with network information.
-/// This includes gateway detection and hostname resolution.
+/// This includes gateway detection and fast hostname resolution.
 pub async fn scan_network() -> Result<ScanResult> {
+    use std::time::Instant;
+    let scan_start = Instant::now();
+
     // Get network interface, subnet, and gateway
+    tracing::info!("Detecting network configuration...");
     let network_info = get_full_network_info().await?;
 
     tracing::info!(
-        "Scanning network: {} (gateway: {:?})",
+        "Network: {} on {} (gateway: {:?})",
         network_info.subnet,
+        network_info.interface,
         network_info.gateway_ip
     );
 
     // First, get devices from the ARP table (already known devices)
+    tracing::info!("Reading ARP table...");
     let mut devices = arp::get_arp_table().await.unwrap_or_default();
-    tracing::info!("ARP table has {} entries", devices.len());
+    tracing::info!("ARP table: {} known devices", devices.len());
 
     // Then do a ping sweep to discover new devices
+    tracing::info!("Starting ping sweep (this may take 10-20 seconds)...");
+    let ping_start = Instant::now();
     match ping::ping_sweep(&network_info.subnet).await {
         Ok(pinged_devices) => {
-            tracing::info!("Ping sweep found {} responding hosts", pinged_devices.len());
+            let ping_duration = ping_start.elapsed();
+            tracing::info!(
+                "Ping sweep complete: {} responding hosts in {:.1}s",
+                pinged_devices.len(),
+                ping_duration.as_secs_f64()
+            );
 
             // Merge ping results with ARP data
             for pinged in pinged_devices {
-                // Check if we already have this IP from ARP
                 if let Some(existing) = devices.iter_mut().find(|d| d.ip == pinged.ip) {
-                    // Update with ping response time
                     existing.response_time_ms = pinged.response_time_ms;
                 } else {
-                    // Add new device from ping
                     devices.push(pinged);
                 }
             }
@@ -83,9 +93,26 @@ pub async fn scan_network() -> Result<ScanResult> {
         }
     }
 
-    // Resolve hostnames for discovered devices (batched to avoid overwhelming the system)
-    tracing::info!("Resolving hostnames for {} devices...", devices.len());
-    resolve_hostnames_batch(&mut devices).await;
+    // Fast hostname resolution using DNS (skip slow NetBIOS)
+    if !devices.is_empty() {
+        tracing::info!("Resolving hostnames for {} devices...", devices.len());
+        let dns_start = Instant::now();
+        resolve_hostnames_fast(&mut devices).await;
+        let resolved_count = devices.iter().filter(|d| d.hostname.is_some()).count();
+        tracing::info!(
+            "Hostname resolution: {}/{} resolved in {:.1}s",
+            resolved_count,
+            devices.len(),
+            dns_start.elapsed().as_secs_f64()
+        );
+    }
+
+    let total_duration = scan_start.elapsed();
+    tracing::info!(
+        "Scan complete: {} devices found in {:.1}s",
+        devices.len(),
+        total_duration.as_secs_f64()
+    );
 
     Ok(ScanResult {
         devices,
@@ -127,12 +154,15 @@ pub async fn get_full_network_info() -> Result<NetworkInfo> {
     }
 }
 
-/// Resolve hostnames for devices in batches to avoid overwhelming the system
-async fn resolve_hostnames_batch(devices: &mut [Device]) {
+/// Fast hostname resolution using DNS with high parallelism and short timeouts.
+/// Falls back gracefully if DNS is slow or unavailable.
+async fn resolve_hostnames_fast(devices: &mut [Device]) {
     use tokio::time::{timeout, Duration};
 
-    const BATCH_SIZE: usize = 8;
-    const TIMEOUT_MS: u64 = 2000;
+    // High parallelism since DNS lookups are mostly I/O bound
+    const BATCH_SIZE: usize = 32;
+    // Short timeout - if DNS doesn't respond quickly, skip it
+    const TIMEOUT_MS: u64 = 500;
 
     for chunk in devices.chunks_mut(BATCH_SIZE) {
         let futures: Vec<_> = chunk
@@ -140,7 +170,12 @@ async fn resolve_hostnames_batch(devices: &mut [Device]) {
             .map(|d| {
                 let ip = d.ip.clone();
                 async move {
-                    match timeout(Duration::from_millis(TIMEOUT_MS), resolve_hostname(&ip)).await {
+                    match timeout(
+                        Duration::from_millis(TIMEOUT_MS),
+                        resolve_hostname_fast(&ip),
+                    )
+                    .await
+                    {
                         Ok(hostname) => (ip, hostname),
                         Err(_) => (ip, None), // Timeout
                     }
@@ -158,6 +193,74 @@ async fn resolve_hostnames_batch(devices: &mut [Device]) {
             }
         }
     }
+}
+
+/// Fast hostname resolution using system DNS resolver.
+/// Much faster than NetBIOS (nbtstat) on Windows.
+async fn resolve_hostname_fast(ip: &str) -> Option<String> {
+    use std::net::ToSocketAddrs;
+
+    // Use Rust's built-in DNS resolver which is much faster than spawning processes
+    let socket_addr = format!("{}:0", ip);
+
+    // Spawn blocking DNS lookup
+    let ip_owned = ip.to_string();
+    tokio::task::spawn_blocking(move || {
+        // Try to get hostname via reverse DNS
+        if let Ok(mut addrs) = socket_addr.to_socket_addrs() {
+            if let Some(_addr) = addrs.next() {
+                // The to_socket_addrs doesn't give us the hostname directly,
+                // so we need to use getnameinfo or similar
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                {
+                    // Use getent or host command for reverse lookup
+                    if let Ok(output) = std::process::Command::new("getent")
+                        .args(["hosts", &ip_owned])
+                        .output()
+                    {
+                        if output.status.success() {
+                            let out = String::from_utf8_lossy(&output.stdout);
+                            // Format: "192.168.1.1    hostname.local"
+                            if let Some(hostname) = out.split_whitespace().nth(1) {
+                                if !hostname.is_empty() {
+                                    return Some(hostname.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+
+                #[cfg(target_os = "windows")]
+                {
+                    // Use nslookup for reverse DNS (much faster than nbtstat)
+                    if let Ok(output) = std::process::Command::new("nslookup")
+                        .arg(&ip_owned)
+                        .output()
+                    {
+                        if output.status.success() {
+                            let out = String::from_utf8_lossy(&output.stdout);
+                            // Look for "Name:    hostname"
+                            for line in out.lines() {
+                                let trimmed = line.trim();
+                                if trimmed.starts_with("Name:") {
+                                    if let Some(name) = trimmed.strip_prefix("Name:") {
+                                        let hostname = name.trim();
+                                        if !hostname.is_empty() && !hostname.contains(&ip_owned) {
+                                            return Some(hostname.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 #[cfg(target_os = "windows")]

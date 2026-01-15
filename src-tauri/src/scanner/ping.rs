@@ -8,40 +8,53 @@ use std::time::Instant;
 
 /// Perform a ping sweep of the subnet using the system ping command
 pub async fn ping_sweep(subnet: &str) -> Result<Vec<Device>> {
-    let ip_net: IpNetwork = subnet.parse()
-        .context("Failed to parse subnet")?;
-    
+    let ip_net: IpNetwork = subnet.parse().context("Failed to parse subnet")?;
+
     let mut devices = Vec::new();
-    
+
     // Generate IP list (skip network and broadcast addresses)
-    let ips: Vec<std::net::IpAddr> = ip_net.iter()
-        .skip(1)  // Skip network address
+    let ips: Vec<std::net::IpAddr> = ip_net
+        .iter()
+        .skip(1) // Skip network address
         .take(253) // Limit to prevent scanning too many hosts
         .collect();
-    
-    tracing::info!("Starting ping sweep of {} hosts", ips.len());
-    
-    // Ping hosts concurrently (in batches to avoid overwhelming the system)
-    let batch_size = 20;
-    for batch in ips.chunks(batch_size) {
+
+    let total_hosts = ips.len();
+    tracing::info!("Pinging {} hosts in subnet {}", total_hosts, subnet);
+
+    // High parallelism for fast scanning - ping commands are mostly I/O wait
+    let batch_size = 50;
+    let mut completed = 0;
+
+    for (batch_idx, batch) in ips.chunks(batch_size).enumerate() {
         let mut batch_handles = Vec::new();
-        
+
         for ip in batch {
-        let ip_str = ip.to_string();
-        let handle = tokio::spawn(async move {
-                ping_host(&ip_str).await
-        });
+            let ip_str = ip.to_string();
+            let handle = tokio::spawn(async move { ping_host(&ip_str).await });
             batch_handles.push(handle);
-    }
-    
+        }
+
         // Wait for this batch to complete
+        let mut batch_found = 0;
         for handle in batch_handles {
-        if let Ok(Ok(Some(device))) = handle.await {
-            devices.push(device);
+            if let Ok(Ok(Some(device))) = handle.await {
+                devices.push(device);
+                batch_found += 1;
             }
         }
+
+        completed += batch.len();
+        if batch_found > 0 || (batch_idx + 1) % 3 == 0 {
+            tracing::debug!(
+                "Ping progress: {}/{} hosts checked, {} responding",
+                completed,
+                total_hosts,
+                devices.len()
+            );
+        }
     }
-    
+
     Ok(devices)
 }
 

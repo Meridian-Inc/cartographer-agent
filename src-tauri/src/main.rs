@@ -10,7 +10,6 @@ mod scanner;
 mod scheduler;
 // mod tray; // TODO: Re-enable when system tray plugin is available
 
-use tauri::Manager;
 use tracing::info;
 
 fn main() {

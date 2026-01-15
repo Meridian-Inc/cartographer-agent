@@ -36,11 +36,15 @@ pub async fn start_login() -> Result<crate::auth::credentials::AuthStatus> {
                 let expires_at = token_resp.expires_in
                     .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs as i64));
                 
+                let network_id = token_resp.network_id;
+                let network_name = token_resp.network_name;
+                let user_email = token_resp.user_email;
+                
                 let creds = Credentials {
                     access_token: token_resp.access_token,
-                    network_id: token_resp.network_id,
-                    network_name: token_resp.network_name.clone(),
-                    user_email: token_resp.user_email.clone(),
+                    network_id: network_id.clone(),
+                    network_name: network_name.clone(),
+                    user_email: user_email.clone(),
                     expires_at,
                 };
                 
@@ -48,15 +52,15 @@ pub async fn start_login() -> Result<crate::auth::credentials::AuthStatus> {
                 
                 tracing::info!(
                     "Successfully connected to network '{}' (id: {})",
-                    token_resp.network_name,
-                    token_resp.network_id
+                    network_name,
+                    network_id
                 );
                 
                 return Ok(crate::auth::credentials::AuthStatus {
                     authenticated: true,
-                    user_email: Some(token_resp.user_email),
-                    network_id: Some(token_resp.network_id),
-                    network_name: Some(token_resp.network_name),
+                    user_email: Some(user_email),
+                    network_id: Some(network_id),
+                    network_name: Some(network_name),
                 });
             }
             Ok(None) => {

@@ -4,6 +4,7 @@ mod ping;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+use std::time::Instant;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -259,6 +260,63 @@ async fn resolve_hostname(ip: &str) -> Option<String> {
                 if !hostname.is_empty() {
                     return Some(hostname.to_string());
                 }
+            }
+        }
+    }
+    
+    None
+}
+
+/// Ping a single device and return response time in ms if successful.
+/// Used for health checks on known devices.
+pub async fn ping_device(ip: &str) -> Result<f64> {
+    let start = Instant::now();
+    
+    #[cfg(target_os = "windows")]
+    let output = hidden_command("ping")
+        .args(["-n", "1", "-w", "2000", ip])
+        .output()
+        .context("Failed to execute ping command")?;
+    
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    let output = hidden_command("ping")
+        .args(["-c", "1", "-W", "2", ip])
+        .output()
+        .context("Failed to execute ping command")?;
+    
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    let output = {
+        return Err(anyhow::anyhow!("Unsupported platform"));
+    };
+    
+    if !output.status.success() {
+        return Err(anyhow::anyhow!("Host unreachable"));
+    }
+    
+    let elapsed = start.elapsed();
+    let default_time = elapsed.as_secs_f64() * 1000.0;
+    
+    // Try to parse actual ping time from output
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let ping_time = parse_ping_time(&output_str).unwrap_or(default_time);
+    
+    Ok(ping_time)
+}
+
+/// Parse ping response time from command output
+fn parse_ping_time(output: &str) -> Option<f64> {
+    // Windows format: "Reply from X.X.X.X: bytes=32 time=1ms TTL=64"
+    // Linux/macOS format: "64 bytes from X.X.X.X: icmp_seq=1 ttl=64 time=1.23 ms"
+    
+    for word in output.split_whitespace() {
+        if word.starts_with("time=") || word.starts_with("time<") {
+            let time_str = word
+                .trim_start_matches("time=")
+                .trim_start_matches("time<")
+                .trim_end_matches("ms");
+            
+            if let Ok(time) = time_str.parse::<f64>() {
+                return Some(time);
             }
         }
     }

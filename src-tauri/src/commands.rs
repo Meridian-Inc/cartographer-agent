@@ -1,7 +1,7 @@
 use crate::auth::{check_auth, start_login, logout as auth_logout};
 use crate::cloud::CloudClient;
 use crate::scanner::{scan_network as scanner_scan_network, Device};
-use crate::scheduler::{set_scan_interval as scheduler_set_scan_interval, get_scan_interval};
+use crate::scheduler::{set_scan_interval as scheduler_set_scan_interval, get_scan_interval, update_known_devices};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -70,6 +70,9 @@ pub async fn scan_network() -> Result<Vec<Device>, String> {
     let devices = scanner_scan_network().await.map_err(|e| format!("{}", e))?;
     
     tracing::info!("Scan complete, found {} devices", devices.len());
+    
+    // Update known devices for health checks
+    update_known_devices(devices.clone()).await;
     
     // Upload to cloud if authenticated
     match check_auth().await {

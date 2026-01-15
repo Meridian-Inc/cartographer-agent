@@ -159,6 +159,40 @@ impl CloudClient {
             .context("Failed to parse network info response")
     }
 
+    pub async fn upload_health_check(&self, results: &[crate::scheduler::DeviceHealthResult]) -> Result<()> {
+        let creds = crate::auth::load_credentials().await
+            .context("Failed to load credentials")?
+            .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
+        
+        let url = format!("{}/agent/health", self.base_url);
+        
+        let payload = HealthCheckRequest {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            results: results.iter().map(|r| HealthCheckResult {
+                ip: r.ip.clone(),
+                reachable: r.reachable,
+                response_time_ms: r.response_time_ms,
+            }).collect(),
+        };
+        
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&url)
+            .bearer_auth(&creds.access_token)
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to upload health check")?;
+        
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Server returned error: {} - {}", status, body));
+        }
+        
+        Ok(())
+    }
+
     pub async fn open_dashboard(&self) -> Result<()> {
         let creds = crate::auth::load_credentials().await
             .context("Failed to load credentials")?
@@ -230,5 +264,18 @@ pub struct NetworkInfoResponse {
     pub network_id: String,
     pub network_name: String,
     pub last_sync_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct HealthCheckRequest {
+    timestamp: String,
+    results: Vec<HealthCheckResult>,
+}
+
+#[derive(Debug, Serialize)]
+struct HealthCheckResult {
+    ip: String,
+    reachable: bool,
+    response_time_ms: Option<f64>,
 }
 

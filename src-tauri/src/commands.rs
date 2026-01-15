@@ -1,6 +1,6 @@
 use crate::auth::{check_auth, logout as auth_logout, start_login};
 use crate::cloud::CloudClient;
-use crate::scanner::{ping_device, scan_network as scanner_scan_network, Device};
+use crate::scanner::{ping_device, scan_network as scanner_scan_network, Device, ScanResult};
 use crate::scheduler::{
     ensure_background_scanning, get_known_devices, get_last_scan_time, get_scan_interval,
     persist_state, record_scan_time, set_scan_interval as scheduler_set_scan_interval,
@@ -79,15 +79,19 @@ pub async fn logout() -> Result<(), String> {
 
 #[tauri::command]
 pub async fn scan_network() -> Result<Vec<Device>, String> {
-    let devices = scanner_scan_network().await.map_err(|e| format!("{}", e))?;
+    let scan_result = scanner_scan_network().await.map_err(|e| format!("{}", e))?;
 
-    tracing::info!("Scan complete, found {} devices", devices.len());
+    tracing::info!(
+        "Scan complete, found {} devices (gateway: {:?})",
+        scan_result.devices.len(),
+        scan_result.network_info.gateway_ip
+    );
 
     // Record scan time
     record_scan_time();
 
     // Update known devices for health checks
-    update_known_devices(devices.clone()).await;
+    update_known_devices(scan_result.devices.clone()).await;
 
     // Persist to disk
     persist_state().await;
@@ -101,7 +105,7 @@ pub async fn scan_network() -> Result<Vec<Device>, String> {
                 status.network_name.as_deref().unwrap_or("Unknown")
             );
             let client = get_cloud_client().await;
-            if let Err(e) = client.upload_scan(&devices).await {
+            if let Err(e) = client.upload_scan_result(&scan_result).await {
                 tracing::warn!("Failed to upload scan to cloud: {}", e);
             }
         }
@@ -113,7 +117,7 @@ pub async fn scan_network() -> Result<Vec<Device>, String> {
         }
     }
 
-    Ok(devices)
+    Ok(scan_result.devices)
 }
 
 #[tauri::command]

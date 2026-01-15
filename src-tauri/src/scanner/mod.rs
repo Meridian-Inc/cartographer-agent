@@ -30,21 +30,42 @@ pub struct Device {
     pub hostname: Option<String>,
 }
 
-pub async fn scan_network() -> Result<Vec<Device>> {
-    // Get network interface and subnet
-    let (_interface, subnet) = get_network_info_internal().await?;
-    
-    tracing::info!("Scanning network: {}", subnet);
-    
+/// Network information including interface, subnet, and gateway
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkInfo {
+    pub interface: String,
+    pub subnet: String,
+    pub gateway_ip: Option<String>,
+}
+
+/// Scan result containing devices and network information
+#[derive(Debug, Clone)]
+pub struct ScanResult {
+    pub devices: Vec<Device>,
+    pub network_info: NetworkInfo,
+}
+
+/// Scan the local network and return devices with network information.
+/// This includes gateway detection and hostname resolution.
+pub async fn scan_network() -> Result<ScanResult> {
+    // Get network interface, subnet, and gateway
+    let network_info = get_full_network_info().await?;
+
+    tracing::info!(
+        "Scanning network: {} (gateway: {:?})",
+        network_info.subnet,
+        network_info.gateway_ip
+    );
+
     // First, get devices from the ARP table (already known devices)
     let mut devices = arp::get_arp_table().await.unwrap_or_default();
     tracing::info!("ARP table has {} entries", devices.len());
-    
+
     // Then do a ping sweep to discover new devices
-    match ping::ping_sweep(&subnet).await {
+    match ping::ping_sweep(&network_info.subnet).await {
         Ok(pinged_devices) => {
             tracing::info!("Ping sweep found {} responding hosts", pinged_devices.len());
-            
+
             // Merge ping results with ARP data
             for pinged in pinged_devices {
                 // Check if we already have this IP from ARP
@@ -61,44 +82,87 @@ pub async fn scan_network() -> Result<Vec<Device>> {
             tracing::warn!("Ping sweep failed: {}", e);
         }
     }
-    
-    // Note: Hostname resolution is skipped during scan to avoid spawning
-    // many external processes (one per device). Hostnames can be resolved
-    // lazily in the UI or via a background task if needed.
-    
-    Ok(devices)
+
+    // Resolve hostnames for discovered devices (batched to avoid overwhelming the system)
+    tracing::info!("Resolving hostnames for {} devices...", devices.len());
+    resolve_hostnames_batch(&mut devices).await;
+
+    Ok(ScanResult {
+        devices,
+        network_info,
+    })
+}
+
+/// Legacy function for backward compatibility - returns just devices
+pub async fn scan_network_devices_only() -> Result<Vec<Device>> {
+    let result = scan_network().await?;
+    Ok(result.devices)
 }
 
 pub async fn get_network_info() -> Result<String> {
-    let (interface, subnet) = get_network_info_internal().await?;
-    Ok(format!("{} ({})", subnet, interface))
+    let info = get_full_network_info().await?;
+    Ok(format!("{} ({})", info.subnet, info.interface))
 }
 
-async fn get_network_info_internal() -> Result<(String, String)> {
+/// Get full network information including gateway IP
+pub async fn get_full_network_info() -> Result<NetworkInfo> {
     #[cfg(target_os = "windows")]
     {
-        get_windows_network_info().await
+        get_windows_network_info_full().await
     }
-    
+
     #[cfg(target_os = "linux")]
     {
-        get_linux_network_info().await
+        get_linux_network_info_full().await
     }
-    
+
     #[cfg(target_os = "macos")]
     {
-        get_macos_network_info().await
+        get_macos_network_info_full().await
     }
-    
+
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         Err(anyhow::anyhow!("Unsupported platform"))
     }
 }
 
+/// Resolve hostnames for devices in batches to avoid overwhelming the system
+async fn resolve_hostnames_batch(devices: &mut [Device]) {
+    use tokio::time::{timeout, Duration};
+
+    const BATCH_SIZE: usize = 8;
+    const TIMEOUT_MS: u64 = 2000;
+
+    for chunk in devices.chunks_mut(BATCH_SIZE) {
+        let futures: Vec<_> = chunk
+            .iter()
+            .map(|d| {
+                let ip = d.ip.clone();
+                async move {
+                    match timeout(Duration::from_millis(TIMEOUT_MS), resolve_hostname(&ip)).await {
+                        Ok(hostname) => (ip, hostname),
+                        Err(_) => (ip, None), // Timeout
+                    }
+                }
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+
+        for (ip, hostname) in results {
+            if let Some(device) = chunk.iter_mut().find(|d| d.ip == ip) {
+                if hostname.is_some() {
+                    device.hostname = hostname;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
-async fn get_windows_network_info() -> Result<(String, String)> {
-    // Get default gateway and interface using route print
+async fn get_windows_network_info_full() -> Result<NetworkInfo> {
+    // Get default gateway and interface using PowerShell
     let output = hidden_command("powershell")
         .args(["-Command", r#"
             $adapter = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null } | Select-Object -First 1
@@ -106,6 +170,7 @@ async fn get_windows_network_info() -> Result<(String, String)> {
                 $ip = $adapter.IPv4Address.IPAddress
                 $prefix = $adapter.IPv4Address.PrefixLength
                 $iface = $adapter.InterfaceAlias
+                $gateway = $adapter.IPv4DefaultGateway.NextHop
                 # Calculate network address
                 $ipBytes = [System.Net.IPAddress]::Parse($ip).GetAddressBytes()
                 $maskInt = [uint32](0xFFFFFFFF -shl (32 - $prefix))
@@ -116,49 +181,71 @@ async fn get_windows_network_info() -> Result<(String, String)> {
                     $networkBytes += $ipBytes[$i] -band $maskBytes[$i]
                 }
                 $network = [System.Net.IPAddress]::new($networkBytes)
-                Write-Output "$iface|$network/$prefix"
+                Write-Output "$iface|$network/$prefix|$gateway"
             }
         "#])
         .output()
         .context("Failed to run PowerShell command")?;
-    
+
     let output_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    
+
     if output_str.contains('|') {
         let parts: Vec<&str> = output_str.split('|').collect();
-        if parts.len() == 2 {
-            return Ok((parts[0].to_string(), parts[1].to_string()));
+        if parts.len() >= 2 {
+            let interface = parts[0].to_string();
+            let subnet = parts[1].to_string();
+            let gateway_ip = parts.get(2).map(|s| s.to_string()).filter(|s| !s.is_empty());
+
+            return Ok(NetworkInfo {
+                interface,
+                subnet,
+                gateway_ip,
+            });
         }
     }
-    
+
     // Fallback to common defaults
-    Ok(("Ethernet".to_string(), "192.168.1.0/24".to_string()))
+    Ok(NetworkInfo {
+        interface: "Ethernet".to_string(),
+        subnet: "192.168.1.0/24".to_string(),
+        gateway_ip: Some("192.168.1.1".to_string()),
+    })
 }
 
 #[cfg(target_os = "linux")]
-async fn get_linux_network_info() -> Result<(String, String)> {
-    // Get default interface
+async fn get_linux_network_info_full() -> Result<NetworkInfo> {
+    // Get default route info (includes gateway)
+    // Format: "default via 192.168.1.1 dev eth0 proto dhcp metric 100"
     let route_output = hidden_command("ip")
         .args(["route", "show", "default"])
         .output()
         .context("Failed to run ip route command")?;
-    
+
     let route_str = String::from_utf8_lossy(&route_output.stdout);
+
+    // Parse gateway IP (after "via")
+    let gateway_ip = route_str
+        .split_whitespace()
+        .skip_while(|&s| s != "via")
+        .nth(1)
+        .map(|s| s.to_string());
+
+    // Parse interface (after "dev")
     let interface = route_str
         .split_whitespace()
         .skip_while(|&s| s != "dev")
         .nth(1)
         .unwrap_or("eth0")
         .to_string();
-    
+
     // Get IP and subnet for the interface
     let addr_output = hidden_command("ip")
         .args(["addr", "show", &interface])
         .output()
         .context("Failed to run ip addr command")?;
-    
+
     let addr_str = String::from_utf8_lossy(&addr_output.stdout);
-    
+
     // Parse inet line to get IP/prefix
     for line in addr_str.lines() {
         let trimmed = line.trim();
@@ -167,39 +254,56 @@ async fn get_linux_network_info() -> Result<(String, String)> {
                 // Convert IP/prefix to network/prefix
                 if let Ok(network) = cidr.parse::<ipnetwork::IpNetwork>() {
                     let subnet = format!("{}/{}", network.network(), network.prefix());
-                    return Ok((interface, subnet));
+                    return Ok(NetworkInfo {
+                        interface,
+                        subnet,
+                        gateway_ip,
+                    });
                 }
             }
         }
     }
-    
-    Ok((interface, "192.168.1.0/24".to_string()))
+
+    Ok(NetworkInfo {
+        interface,
+        subnet: "192.168.1.0/24".to_string(),
+        gateway_ip,
+    })
 }
 
 #[cfg(target_os = "macos")]
-async fn get_macos_network_info() -> Result<(String, String)> {
-    // Get default interface
+async fn get_macos_network_info_full() -> Result<NetworkInfo> {
+    // Get default route info (includes gateway)
     let route_output = hidden_command("route")
         .args(["-n", "get", "default"])
         .output()
         .context("Failed to run route command")?;
-    
+
     let route_str = String::from_utf8_lossy(&route_output.stdout);
+
+    // Parse gateway IP
+    let gateway_ip = route_str
+        .lines()
+        .find(|line| line.contains("gateway:"))
+        .and_then(|line| line.split(':').nth(1))
+        .map(|s| s.trim().to_string());
+
+    // Parse interface
     let interface = route_str
         .lines()
         .find(|line| line.contains("interface:"))
         .and_then(|line| line.split(':').nth(1))
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "en0".to_string());
-    
+
     // Get IP and subnet for the interface
     let ifconfig_output = hidden_command("ifconfig")
         .arg(&interface)
         .output()
         .context("Failed to run ifconfig command")?;
-    
+
     let ifconfig_str = String::from_utf8_lossy(&ifconfig_output.stdout);
-    
+
     // Parse inet line
     for line in ifconfig_str.lines() {
         let trimmed = line.trim();
@@ -209,23 +313,29 @@ async fn get_macos_network_info() -> Result<(String, String)> {
                 // Convert hex mask to prefix length
                 if let Ok(mask_int) = u32::from_str_radix(mask.trim_start_matches("0x"), 16) {
                     let prefix = mask_int.count_ones();
-                    let ip_addr: std::net::Ipv4Addr = ip.parse().unwrap_or([192,168,1,1].into());
+                    let ip_addr: std::net::Ipv4Addr = ip.parse().unwrap_or([192, 168, 1, 1].into());
                     let mask_addr = std::net::Ipv4Addr::from(mask_int);
                     let network_int = u32::from(ip_addr) & u32::from(mask_addr);
                     let network = std::net::Ipv4Addr::from(network_int);
-                    return Ok((interface, format!("{}/{}", network, prefix)));
+                    return Ok(NetworkInfo {
+                        interface,
+                        subnet: format!("{}/{}", network, prefix),
+                        gateway_ip,
+                    });
                 }
             }
         }
     }
-    
-    Ok((interface, "192.168.1.0/24".to_string()))
+
+    Ok(NetworkInfo {
+        interface,
+        subnet: "192.168.1.0/24".to_string(),
+        gateway_ip,
+    })
 }
 
 /// Resolve hostname for an IP address using system commands.
-/// Currently unused during scans to avoid spawning many processes,
-/// but kept for potential future lazy resolution.
-#[allow(dead_code)]
+/// Uses reverse DNS on Linux/macOS and NetBIOS on Windows.
 async fn resolve_hostname(ip: &str) -> Option<String> {
     #[cfg(target_os = "windows")]
     {

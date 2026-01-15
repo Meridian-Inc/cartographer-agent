@@ -1,4 +1,4 @@
-use crate::scanner::Device;
+use crate::scanner::{Device, ScanResult};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -88,33 +88,46 @@ impl CloudClient {
         Ok(resp.status().is_success())
     }
 
-    pub async fn upload_scan(&self, devices: &[Device]) -> Result<()> {
+    /// Upload scan results to the cloud, including gateway detection and network info.
+    pub async fn upload_scan_result(&self, scan_result: &ScanResult) -> Result<()> {
         // Get credentials
-        let creds = crate::auth::load_credentials().await
+        let creds = crate::auth::load_credentials()
+            .await
             .context("Failed to load credentials")?
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
-        
+
         let url = format!("{}/agent/sync", self.base_url);
-        
+
+        let gateway_ip = scan_result.network_info.gateway_ip.as_deref();
+
         tracing::info!(
-            "Uploading {} devices to cloud (network: {})", 
-            devices.len(), 
-            creds.network_name
+            "Uploading {} devices to cloud (network: {}, gateway: {:?})",
+            scan_result.devices.len(),
+            creds.network_name,
+            gateway_ip
         );
-        
+
         let payload = SyncRequest {
             timestamp: chrono::Utc::now().to_rfc3339(),
             scan_duration_ms: None,
-            devices: devices.iter().map(|d| ScanDevice {
-                ip: d.ip.clone(),
-                mac: d.mac.clone(),
-                response_time_ms: d.response_time_ms,
-                hostname: d.hostname.clone(),
-                is_gateway: false,
-            }).collect(),
-            network_info: None,
+            devices: scan_result
+                .devices
+                .iter()
+                .map(|d| ScanDevice {
+                    ip: d.ip.clone(),
+                    mac: d.mac.clone(),
+                    response_time_ms: d.response_time_ms,
+                    hostname: d.hostname.clone(),
+                    // Mark device as gateway if its IP matches the detected gateway
+                    is_gateway: gateway_ip.map_or(false, |gw| gw == d.ip),
+                })
+                .collect(),
+            network_info: Some(NetworkInfo {
+                subnet: Some(scan_result.network_info.subnet.clone()),
+                interface: Some(scan_result.network_info.interface.clone()),
+            }),
         };
-        
+
         let client = reqwest::Client::new();
         let resp = client
             .post(&url)
@@ -123,14 +136,66 @@ impl CloudClient {
             .send()
             .await
             .context("Failed to upload scan")?;
-        
+
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             tracing::error!("Sync failed: {} - {}", status, body);
             return Err(anyhow::anyhow!("Server returned error: {} - {}", status, body));
         }
-        
+
+        tracing::info!("Scan uploaded successfully");
+        Ok(())
+    }
+
+    /// Legacy function - upload devices without network info (for backward compatibility)
+    pub async fn upload_scan(&self, devices: &[Device]) -> Result<()> {
+        // Get credentials
+        let creds = crate::auth::load_credentials()
+            .await
+            .context("Failed to load credentials")?
+            .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
+
+        let url = format!("{}/agent/sync", self.base_url);
+
+        tracing::info!(
+            "Uploading {} devices to cloud (network: {})",
+            devices.len(),
+            creds.network_name
+        );
+
+        let payload = SyncRequest {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            scan_duration_ms: None,
+            devices: devices
+                .iter()
+                .map(|d| ScanDevice {
+                    ip: d.ip.clone(),
+                    mac: d.mac.clone(),
+                    response_time_ms: d.response_time_ms,
+                    hostname: d.hostname.clone(),
+                    is_gateway: false,
+                })
+                .collect(),
+            network_info: None,
+        };
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&url)
+            .bearer_auth(&creds.access_token)
+            .json(&payload)
+            .send()
+            .await
+            .context("Failed to upload scan")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::error!("Sync failed: {} - {}", status, body);
+            return Err(anyhow::anyhow!("Server returned error: {} - {}", status, body));
+        }
+
         tracing::info!("Scan uploaded successfully");
         Ok(())
     }

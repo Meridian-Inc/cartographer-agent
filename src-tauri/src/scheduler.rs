@@ -1,7 +1,7 @@
 use crate::auth::check_auth;
 use crate::cloud::CloudClient;
 use crate::persistence;
-use crate::scanner::{ping_device, scan_network, Device};
+use crate::scanner::{ping_device, scan_network, Device, ScanResult};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
@@ -128,15 +128,19 @@ async fn run_scan_and_upload(app: &AppHandle) {
     tracing::info!("Running network scan");
 
     match scan_network().await {
-        Ok(devices) => {
-            let device_count = devices.len();
-            tracing::info!("Scan found {} devices", device_count);
+        Ok(scan_result) => {
+            let device_count = scan_result.devices.len();
+            tracing::info!(
+                "Scan found {} devices (gateway: {:?})",
+                device_count,
+                scan_result.network_info.gateway_ip
+            );
 
             // Record scan time
             record_scan_time();
 
             // Update known devices for health checks
-            update_known_devices(devices.clone()).await;
+            update_known_devices(scan_result.devices.clone()).await;
 
             // Persist to disk
             persist_state().await;
@@ -145,7 +149,7 @@ async fn run_scan_and_upload(app: &AppHandle) {
             if let Ok(status) = check_auth().await {
                 if status.authenticated {
                     let client = CloudClient::new();
-                    if let Err(e) = client.upload_scan(&devices).await {
+                    if let Err(e) = client.upload_scan_result(&scan_result).await {
                         tracing::warn!("Failed to upload scan to cloud: {}", e);
                     } else {
                         tracing::info!("Scan synced to cloud");

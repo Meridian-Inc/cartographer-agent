@@ -8,7 +8,8 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Credentials {
     pub access_token: String,
-    pub agent_id: String,
+    pub network_id: i32,
+    pub network_name: String,
     pub user_email: String,
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -17,7 +18,8 @@ pub struct Credentials {
 pub struct AuthStatus {
     pub authenticated: bool,
     pub user_email: Option<String>,
-    pub agent_id: Option<String>,
+    pub network_id: Option<i32>,
+    pub network_name: Option<String>,
 }
 
 fn get_credentials_path() -> Result<PathBuf> {
@@ -83,7 +85,8 @@ pub async fn check_auth() -> Result<AuthStatus> {
             Ok(true) => Ok(AuthStatus {
                 authenticated: true,
                 user_email: Some(creds.user_email),
-                agent_id: Some(creds.agent_id),
+                network_id: Some(creds.network_id),
+                network_name: Some(creds.network_name),
             }),
             Ok(false) | Err(_) => {
                 // Token invalid, delete credentials
@@ -91,7 +94,8 @@ pub async fn check_auth() -> Result<AuthStatus> {
                 Ok(AuthStatus {
                     authenticated: false,
                     user_email: None,
-                    agent_id: None,
+                    network_id: None,
+                    network_name: None,
                 })
             }
         }
@@ -99,7 +103,8 @@ pub async fn check_auth() -> Result<AuthStatus> {
         Ok(AuthStatus {
             authenticated: false,
             user_email: None,
-            agent_id: None,
+            network_id: None,
+            network_name: None,
         })
     }
 }

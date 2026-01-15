@@ -10,13 +10,25 @@
               <span class="inline-block w-2 h-2 bg-green-500 rounded-full mr-2"></span>
               Connected as {{ status.userEmail || 'Unknown' }}
             </p>
+            <p v-if="status.networkName" class="text-sm text-indigo-600 mt-1">
+              📡 {{ status.networkName }}
+            </p>
           </div>
-          <button
-            @click="$router.push('/preferences')"
-            class="text-gray-600 hover:text-gray-900"
-          >
-            ⚙️ Settings
-          </button>
+          <div class="flex items-center gap-2">
+            <button
+              @click="handleDisconnect"
+              class="text-gray-500 hover:text-red-600 text-sm"
+              title="Disconnect from cloud"
+            >
+              Disconnect
+            </button>
+            <button
+              @click="$router.push('/preferences')"
+              class="text-gray-600 hover:text-gray-900"
+            >
+              ⚙️ Settings
+            </button>
+          </div>
         </div>
       </div>
 
@@ -95,6 +107,20 @@ async function openCloud() {
     await invoke('open_cloud_dashboard')
   } catch (error) {
     console.error('Failed to open cloud:', error)
+  }
+}
+
+async function handleDisconnect() {
+  if (!confirm('Are you sure you want to disconnect from the cloud? You can reconnect at any time.')) {
+    return
+  }
+  try {
+    await agentStore.logout()
+    // Navigate back to setup page
+    window.location.href = '/'
+  } catch (error) {
+    console.error('Failed to disconnect:', error)
+    alert('Failed to disconnect. Please try again.')
   }
 }
 

@@ -11,7 +11,7 @@ pub async fn start_login() -> Result<crate::auth::credentials::AuthStatus> {
     let device_code_resp = client.request_device_code().await
         .context("Failed to request device code")?;
     
-    // Step 2: Open browser or show URL
+    // Step 2: Open browser - use the verification_uri from the response
     let url = format!("{}?code={}", device_code_resp.verification_uri, device_code_resp.user_code);
     
     tracing::info!("Opening browser for authentication: {}", url);
@@ -27,28 +27,36 @@ pub async fn start_login() -> Result<crate::auth::credentials::AuthStatus> {
     
     loop {
         if std::time::Instant::now() > expires_at {
-            return Err(anyhow::anyhow!("Device code expired"));
+            return Err(anyhow::anyhow!("Device code expired. Please try again."));
         }
         
         match client.poll_for_token(&device_code_resp.device_code).await {
             Ok(Some(token_resp)) => {
-                // Success! Save credentials
+                // Success! Save credentials with network info
                 let expires_at = token_resp.expires_in
                     .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs as i64));
                 
                 let creds = Credentials {
                     access_token: token_resp.access_token,
-                    agent_id: token_resp.agent_id,
-                    user_email: token_resp.user_email,
+                    network_id: token_resp.network_id,
+                    network_name: token_resp.network_name.clone(),
+                    user_email: token_resp.user_email.clone(),
                     expires_at,
                 };
                 
                 save_credentials(&creds).await?;
                 
+                tracing::info!(
+                    "Successfully connected to network '{}' (id: {})",
+                    token_resp.network_name,
+                    token_resp.network_id
+                );
+                
                 return Ok(crate::auth::credentials::AuthStatus {
                     authenticated: true,
-                    user_email: Some(creds.user_email),
-                    agent_id: Some(creds.agent_id),
+                    user_email: Some(token_resp.user_email),
+                    network_id: Some(token_resp.network_id),
+                    network_name: Some(token_resp.network_name),
                 });
             }
             Ok(None) => {

@@ -2,7 +2,7 @@ use crate::scanner::Device;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-const CLOUD_BASE_URL: &str = "https://cloud.cartographer.example/api/v1";
+const CLOUD_BASE_URL: &str = "https://cartographer.network/api";
 
 #[derive(Debug, Clone)]
 pub struct CloudClient {
@@ -17,7 +17,7 @@ impl CloudClient {
     }
 
     pub async fn request_device_code(&self) -> Result<DeviceCodeResponse> {
-        let url = format!("{}/auth/device", self.base_url);
+        let url = format!("{}/agent/device-code", self.base_url);
         
         let client = reqwest::Client::new();
         let resp = client
@@ -36,7 +36,7 @@ impl CloudClient {
     }
 
     pub async fn poll_for_token(&self, device_code: &str) -> Result<Option<TokenResponse>> {
-        let url = format!("{}/auth/token", self.base_url);
+        let url = format!("{}/agent/token", self.base_url);
         
         let client = reqwest::Client::new();
         let resp = client
@@ -57,7 +57,15 @@ impl CloudClient {
                 Ok(Some(token_resp))
             }
             400 => {
-                // Still waiting (authorization_pending)
+                // Still waiting (authorization_pending) or other error
+                // Check the error type in the response
+                let error_resp: Result<TokenErrorResponse, _> = resp.json().await;
+                if let Ok(err) = error_resp {
+                    if err.error == "authorization_pending" {
+                        return Ok(None);
+                    }
+                    return Err(anyhow::anyhow!("{}: {}", err.error, err.error_description.unwrap_or_default()));
+                }
                 Ok(None)
             }
             _ => {
@@ -67,7 +75,7 @@ impl CloudClient {
     }
 
     pub async fn verify_token(&self, token: &str) -> Result<bool> {
-        let url = format!("{}/auth/verify", self.base_url);
+        let url = format!("{}/agent/verify", self.base_url);
         
         let client = reqwest::Client::new();
         let resp = client
@@ -86,16 +94,19 @@ impl CloudClient {
             .context("Failed to load credentials")?
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
         
-        let url = format!("{}/agents/{}/scans", self.base_url, creds.agent_id);
+        let url = format!("{}/agent/sync", self.base_url);
         
-        let payload = ScanUpload {
+        let payload = SyncRequest {
             timestamp: chrono::Utc::now().to_rfc3339(),
+            scan_duration_ms: None,
             devices: devices.iter().map(|d| ScanDevice {
                 ip: d.ip.clone(),
                 mac: d.mac.clone(),
                 response_time_ms: d.response_time_ms,
                 hostname: d.hostname.clone(),
+                is_gateway: false,
             }).collect(),
+            network_info: None,
         };
         
         let client = reqwest::Client::new();
@@ -114,12 +125,37 @@ impl CloudClient {
         Ok(())
     }
 
+    pub async fn get_network_info(&self) -> Result<NetworkInfoResponse> {
+        let creds = crate::auth::load_credentials().await
+            .context("Failed to load credentials")?
+            .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
+        
+        let url = format!("{}/agent/network", self.base_url);
+        
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(&url)
+            .bearer_auth(&creds.access_token)
+            .send()
+            .await
+            .context("Failed to get network info")?;
+        
+        if !resp.status().is_success() {
+            return Err(anyhow::anyhow!("Server returned error: {}", resp.status()));
+        }
+        
+        resp.json::<NetworkInfoResponse>()
+            .await
+            .context("Failed to parse network info response")
+    }
+
     pub async fn open_dashboard(&self) -> Result<()> {
         let creds = crate::auth::load_credentials().await
             .context("Failed to load credentials")?
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
         
-        let url = format!("https://cloud.cartographer.example/dashboard?agent={}", creds.agent_id);
+        // Navigate to the core app with network context
+        let url = format!("https://cartographer.network/app/?network={}", creds.network_id);
         webbrowser::open(&url)
             .context("Failed to open dashboard in browser")
     }
@@ -141,17 +177,33 @@ struct TokenRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct TokenErrorResponse {
+    error: String,
+    error_description: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TokenResponse {
     pub access_token: String,
-    pub agent_id: String,
-    pub user_email: String,
+    pub token_type: String,
     pub expires_in: Option<u64>,
+    pub network_id: i32,
+    pub network_name: String,
+    pub user_email: String,
 }
 
 #[derive(Debug, Serialize)]
-struct ScanUpload {
+struct SyncRequest {
     timestamp: String,
+    scan_duration_ms: Option<u64>,
     devices: Vec<ScanDevice>,
+    network_info: Option<NetworkInfo>,
+}
+
+#[derive(Debug, Serialize)]
+struct NetworkInfo {
+    subnet: Option<String>,
+    interface: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -160,5 +212,13 @@ struct ScanDevice {
     mac: Option<String>,
     response_time_ms: Option<f64>,
     hostname: Option<String>,
+    is_gateway: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NetworkInfoResponse {
+    pub network_id: i32,
+    pub network_name: String,
+    pub last_sync_at: Option<String>,
 }
 

@@ -10,7 +10,8 @@ use tokio::sync::Mutex;
 pub struct AgentStatus {
     pub authenticated: bool,
     pub user_email: Option<String>,
-    pub agent_id: Option<String>,
+    pub network_id: Option<i32>,
+    pub network_name: Option<String>,
     pub last_scan: Option<String>,
     pub next_scan: Option<String>,
     pub device_count: Option<usize>,
@@ -32,7 +33,8 @@ pub async fn check_auth_status() -> Result<AgentStatus, String> {
         Ok(status) => Ok(AgentStatus {
             authenticated: status.authenticated,
             user_email: status.user_email,
-            agent_id: status.agent_id,
+            network_id: status.network_id,
+            network_name: status.network_name,
             last_scan: None,
             next_scan: None,
             device_count: None,
@@ -47,7 +49,8 @@ pub async fn start_login_flow() -> Result<AgentStatus, String> {
         Ok(status) => Ok(AgentStatus {
             authenticated: status.authenticated,
             user_email: status.user_email,
-            agent_id: status.agent_id,
+            network_id: status.network_id,
+            network_name: status.network_name,
             last_scan: None,
             next_scan: None,
             device_count: None,
@@ -86,7 +89,8 @@ pub async fn get_agent_status() -> Result<AgentStatus, String> {
     Ok(AgentStatus {
         authenticated: status.authenticated,
         user_email: status.user_email,
-        agent_id: status.agent_id,
+        network_id: status.network_id,
+        network_name: status.network_name,
         last_scan: None,
         next_scan: None,
         device_count: None,

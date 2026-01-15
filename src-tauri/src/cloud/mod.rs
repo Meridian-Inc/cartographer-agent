@@ -1,4 +1,4 @@
 mod client;
 
-pub use client::{CloudClient, DeviceCodeResponse, TokenResponse};
+pub use client::{CloudClient, DeviceCodeResponse, TokenResponse, NetworkInfoResponse};
 

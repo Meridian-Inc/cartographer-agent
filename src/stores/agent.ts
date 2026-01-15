@@ -12,7 +12,8 @@ export interface Device {
 export interface AgentStatus {
   authenticated: boolean
   userEmail?: string
-  agentId?: string
+  networkId?: number
+  networkName?: string
   lastScan?: string
   nextScan?: string
   deviceCount?: number

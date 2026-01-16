@@ -1,6 +1,5 @@
 use crate::auth::{check_auth, logout as auth_logout, poll_for_login, request_login_url, start_login, LoginFlowStarted, LoginUrlEvent};
 use crate::cloud::CloudClient;
-use crate::persistence::update_device_health;
 use crate::scanner::{
     check_device_reachable, get_arp_table_ips, scan_network_with_progress, Device, ScanProgress, ScanStage,
 };
@@ -145,7 +144,17 @@ pub async fn complete_login(device_code: String, expires_in: u64, poll_interval:
 
 #[tauri::command]
 pub async fn logout() -> Result<(), String> {
-    auth_logout().await.map_err(|e| e.to_string())
+    // Delete credentials
+    auth_logout().await.map_err(|e| e.to_string())?;
+    
+    // Clear in-memory devices
+    update_known_devices(Vec::new()).await;
+    
+    // Clear persisted state (devices, scan time, etc.)
+    crate::persistence::clear_state().map_err(|e| e.to_string())?;
+    
+    tracing::info!("Logged out and cleared all local device data");
+    Ok(())
 }
 
 /// Event name for scan progress updates
@@ -246,6 +255,12 @@ pub async fn get_agent_status() -> Result<AgentStatus, String> {
     })
 }
 
+/// Get the list of known devices (from last scan or persisted state)
+#[tauri::command]
+pub async fn get_devices() -> Result<Vec<Device>, String> {
+    Ok(get_known_devices().await)
+}
+
 #[tauri::command]
 pub async fn set_scan_interval(minutes: u64) -> Result<(), String> {
     scheduler_set_scan_interval(minutes);
@@ -304,7 +319,7 @@ pub struct HealthCheckStatus {
 
 #[tauri::command]
 pub async fn run_health_check() -> Result<HealthCheckStatus, String> {
-    let devices = get_known_devices().await;
+    let mut devices = get_known_devices().await;
 
     if devices.is_empty() {
         return Err("No devices to check. Run a scan first.".to_string());
@@ -318,13 +333,24 @@ pub async fn run_health_check() -> Result<HealthCheckStatus, String> {
     tracing::debug!("ARP table has {} entries for fallback", arp_ips.len());
 
     // Check all known devices using ping with ARP fallback
+    // Update the devices in-place to ensure all devices get their response_time_ms updated
     let mut health_results = Vec::new();
-    for device in &devices {
+    for device in &mut devices {
         let result = check_device_reachable(&device.ip, &arp_ips).await;
+        let reachable = result.is_ok();
+        let response_time = if reachable {
+            result.ok()
+        } else {
+            None // Mark as unreachable
+        };
+        
+        // Update the device's response time directly
+        device.response_time_ms = response_time;
+        
         health_results.push(DeviceHealthResult {
             ip: device.ip.clone(),
-            reachable: result.is_ok(),
-            response_time_ms: result.ok(),
+            reachable,
+            response_time_ms: response_time,
         });
     }
 
@@ -337,22 +363,11 @@ pub async fn run_health_check() -> Result<HealthCheckStatus, String> {
         unreachable_count
     );
 
-    // Update persisted device health data
-    // For unreachable devices, set response_time_ms to None (will show as red/offline)
-    let health_updates: Vec<(String, Option<f64>)> = health_results
-        .iter()
-        .map(|r| {
-            let response_time = if r.reachable {
-                r.response_time_ms
-            } else {
-                None // Mark as unreachable
-            };
-            (r.ip.clone(), response_time)
-        })
-        .collect();
+    // Update in-memory known devices with the updated health data
+    update_known_devices(devices.clone()).await;
 
-    let updated_devices = update_device_health(&health_updates)
-        .map_err(|e| format!("Failed to update device health: {}", e))?;
+    // Persist to disk
+    persist_state().await;
 
     // Upload to cloud if authenticated
     let mut synced = false;
@@ -382,7 +397,7 @@ pub async fn run_health_check() -> Result<HealthCheckStatus, String> {
         healthy_devices: healthy_count,
         unreachable_devices: unreachable_count,
         synced_to_cloud: synced,
-        devices: updated_devices,
+        devices,
     })
 }
 

@@ -70,6 +70,7 @@ export const useAgentStore = defineStore('agent', () => {
   // Event listener cleanup
   let progressUnlisten: UnlistenFn | null = null
   let healthUnlisten: UnlistenFn | null = null
+  let scanCompleteUnlisten: UnlistenFn | null = null
 
   const isAuthenticated = computed(() => status.value.authenticated)
 
@@ -90,6 +91,26 @@ export const useAgentStore = defineStore('agent', () => {
       }
     })
 
+    // Listen for scan-complete events from background scans
+    // This ensures devices are reloaded after background scans complete
+    scanCompleteUnlisten = await listen<number>('scan-complete', async (event) => {
+      console.log(`Background scan complete, found ${event.payload} devices`)
+      // Reload devices to get the updated list from the backend
+      try {
+        const result = await invoke<Device[]>('get_devices')
+        devices.value = result
+      } catch (error) {
+        console.error('Failed to reload devices after scan:', error)
+      }
+      // Also refresh status to update lastScan time
+      try {
+        const statusResult = await invoke<AgentStatus>('get_agent_status')
+        status.value = statusResult
+      } catch (error) {
+        console.error('Failed to refresh status after scan:', error)
+      }
+    })
+
     // Listen for health check progress events
     healthUnlisten = await listen<HealthCheckProgress>('health-check-progress', (event) => {
       healthCheckProgress.value = event.payload
@@ -98,6 +119,15 @@ export const useAgentStore = defineStore('agent', () => {
         setTimeout(() => {
           healthCheckProgress.value = null
         }, 3000) // Keep final message visible for 3 seconds
+        
+        // Reload devices to get updated health data after background health checks
+        invoke<Device[]>('get_devices')
+          .then(result => {
+            devices.value = result
+          })
+          .catch(error => {
+            console.error('Failed to reload devices after health check:', error)
+          })
       }
     })
   }
@@ -111,6 +141,10 @@ export const useAgentStore = defineStore('agent', () => {
     if (healthUnlisten) {
       healthUnlisten()
       healthUnlisten = null
+    }
+    if (scanCompleteUnlisten) {
+      scanCompleteUnlisten()
+      scanCompleteUnlisten = null
     }
   }
 
@@ -192,7 +226,8 @@ export const useAgentStore = defineStore('agent', () => {
     scanProgress.value = null
     try {
       const result = await invoke<Device[]>('scan_network')
-      devices.value = result
+      // Force update by creating a new array reference
+      devices.value = [...result]
       await refreshStatus()
       return result
     } catch (error) {
@@ -224,6 +259,15 @@ export const useAgentStore = defineStore('agent', () => {
       }
     } catch (error) {
       console.error('Failed to refresh status:', error)
+    }
+  }
+
+  async function loadDevices() {
+    try {
+      const result = await invoke<Device[]>('get_devices')
+      devices.value = result
+    } catch (error) {
+      console.error('Failed to load devices:', error)
     }
   }
 
@@ -261,6 +305,7 @@ export const useAgentStore = defineStore('agent', () => {
     scanNow,
     cancelScan,
     refreshStatus,
+    loadDevices,
     setScanInterval,
     updateDevices,
     cleanupEventListeners

@@ -225,6 +225,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useAgentStore, type ScanStage, type HealthCheckStage } from '@/stores/agent'
 import DeviceList from '@/components/DeviceList.vue'
 import { invoke } from '@tauri-apps/api/core'
@@ -248,11 +249,11 @@ const networkInfo = ref<string>('')
 const checkingHealth = ref(false)
 const healthStatus = ref<HealthCheckStatus | null>(null)
 
-const status = computed(() => agentStore.status)
-const devices = computed(() => agentStore.devices)
-const scanning = computed(() => agentStore.scanning)
-const scanProgress = computed(() => agentStore.scanProgress)
-const healthCheckProgress = computed(() => agentStore.healthCheckProgress)
+// Use storeToRefs for proper reactivity with Pinia
+const { status, devices: storeDevices, scanning, scanProgress, healthCheckProgress } = storeToRefs(agentStore)
+
+// Create a computed that explicitly tracks device changes
+const devices = computed(() => storeDevices.value)
 
 // Determine overall network health status for the indicator dot
 type NetworkHealthStatus = 'online' | 'degraded' | 'offline'
@@ -362,8 +363,9 @@ function formatHealthCheckTime(timestamp: string): string {
 async function handleScan() {
   try {
     await agentStore.scanNow()
-    // Refresh status to get updated lastScan time
+    // Refresh status and devices to ensure UI is in sync
     await agentStore.refreshStatus()
+    await agentStore.loadDevices()
     // Clear health status when scanning new devices
     healthStatus.value = null
   } catch (error) {
@@ -389,7 +391,8 @@ async function handleHealthCheck() {
       ...result,
       timestamp: new Date().toISOString()
     }
-    // Update devices with latest health data
+    // Use the devices returned directly from the health check result
+    // This ensures we have the updated response_time_ms values
     if (result.devices && result.devices.length > 0) {
       agentStore.updateDevices(result.devices)
     }
@@ -434,6 +437,7 @@ async function loadNetworkInfo() {
 
 onMounted(async () => {
   await agentStore.refreshStatus()
+  await agentStore.loadDevices()
   await loadNetworkInfo()
 
   // Refresh status periodically (updates lastScan time automatically)

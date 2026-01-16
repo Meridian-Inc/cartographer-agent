@@ -108,3 +108,16 @@ pub fn update_device_health(health_results: &[(String, Option<f64>)]) -> Result<
     save_state(&state)?;
     Ok(state.devices)
 }
+
+/// Clear all persisted state (devices, scan times, etc.)
+/// Called during logout to remove all local data
+pub fn clear_state() -> Result<()> {
+    let path = get_state_path()?;
+    
+    if path.exists() {
+        std::fs::remove_file(&path).context("Failed to delete state file")?;
+        tracing::info!("Cleared persisted state file");
+    }
+    
+    Ok(())
+}

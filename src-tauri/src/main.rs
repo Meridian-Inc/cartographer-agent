@@ -84,6 +84,7 @@ fn main() {
             commands::scan_network,
             commands::cancel_scan,
             commands::get_agent_status,
+            commands::get_devices,
             commands::set_scan_interval,
             commands::get_network_info,
             commands::get_app_version,

@@ -18,7 +18,7 @@
         </div>
       </div>
       <div v-if="device.response_time_ms !== null && device.response_time_ms !== undefined" class="text-xs font-mono" :class="device.response_time_ms > 0 ? 'text-brand-cyan' : 'text-yellow-500'">
-        {{ device.response_time_ms > 0 ? `${device.response_time_ms.toFixed(1)}ms` : 'ARP only' }}
+        {{ device.response_time_ms > 0 ? `${device.response_time_ms.toFixed(1)}ms` : 'ARP' }}
       </div>
     </div>
     <div v-if="devices.length === 0" class="text-center text-gray-500 py-8">
@@ -39,17 +39,14 @@ defineProps<{
 }>()
 
 // Determine device status based on response time
-// - Green: Device responded to ping (response_time > 0)
-// - Yellow: Device in ARP table but no ping response (response_time = 0)
+// - Green: Device responded to ping (response_time > 0) OR found in ARP table (response_time = 0)
 // - Gray: No response data (device status unknown)
 function getDeviceStatusClass(device: Device): string {
   if (device.response_time_ms === null || device.response_time_ms === undefined) {
     return 'bg-gray-500' // Unknown status
   }
-  if (device.response_time_ms > 0) {
-    return 'bg-green-500' // Online - responded to ping
-  }
-  return 'bg-yellow-500' // Degraded - in ARP but no ping response
+  // Both ping responders and ARP-detected devices show as green (online)
+  return 'bg-green-500'
 }
 
 function getDeviceStatusTitle(device: Device): string {
@@ -59,6 +56,6 @@ function getDeviceStatusTitle(device: Device): string {
   if (device.response_time_ms > 0) {
     return 'Online - responding to ping'
   }
-  return 'Degraded - in ARP table but not responding to ping'
+  return 'Online - detected via ARP'
 }
 </script>

@@ -235,7 +235,7 @@ async fn run_scan_and_upload(app: &AppHandle) {
 
 /// Helper to run health checks and upload
 async fn run_health_checks_and_upload(app: &AppHandle) {
-    let devices = get_known_devices().await;
+    let mut devices = get_known_devices().await;
     if devices.is_empty() {
         return;
     }
@@ -248,15 +248,28 @@ async fn run_health_checks_and_upload(app: &AppHandle) {
     tracing::debug!("ARP table has {} entries for fallback", arp_ips.len());
 
     // Check all known devices using ping with ARP fallback
+    // Update devices in-place to ensure response_time_ms is updated
     let mut health_results = Vec::new();
-    for device in &devices {
+    for device in &mut devices {
         let result = check_device_reachable(&device.ip, &arp_ips).await;
+        let reachable = result.is_ok();
+        let response_time = if reachable { result.ok() } else { None };
+        
+        // Update the device's response time
+        device.response_time_ms = response_time;
+        
         health_results.push(DeviceHealthResult {
             ip: device.ip.clone(),
-            reachable: result.is_ok(),
-            response_time_ms: result.ok(),
+            reachable,
+            response_time_ms: response_time,
         });
     }
+
+    // Update in-memory devices with updated health data
+    update_known_devices(devices).await;
+
+    // Persist to disk
+    persist_state().await;
 
     // Upload health results to cloud if authenticated
     if let Ok(status) = check_auth().await {
@@ -277,7 +290,7 @@ async fn run_health_checks_and_upload(app: &AppHandle) {
 
 /// Helper to run health checks with progress events
 async fn run_health_checks_with_progress(app: &AppHandle) {
-    let devices = get_known_devices().await;
+    let mut devices = get_known_devices().await;
     let total = devices.len();
 
     if total == 0 {
@@ -313,19 +326,26 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
     let arp_ips = get_arp_table_ips().await;
 
     // Check all known devices using ping with ARP fallback
+    // Update devices in-place to ensure response_time_ms is updated
     let mut health_results = Vec::new();
     let mut healthy_count = 0;
 
-    for (i, device) in devices.iter().enumerate() {
+    for (i, device) in devices.iter_mut().enumerate() {
         let result = check_device_reachable(&device.ip, &arp_ips).await;
         let reachable = result.is_ok();
+        let response_time = if reachable { result.ok() } else { None };
+        
         if reachable {
             healthy_count += 1;
         }
+        
+        // Update the device's response time
+        device.response_time_ms = response_time;
+        
         health_results.push(DeviceHealthResult {
             ip: device.ip.clone(),
             reachable,
-            response_time_ms: result.ok(),
+            response_time_ms: response_time,
         });
 
         // Emit progress every device
@@ -340,6 +360,12 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
             },
         );
     }
+
+    // Update in-memory devices with updated health data
+    update_known_devices(devices).await;
+
+    // Persist to disk
+    persist_state().await;
 
     // Emit uploading event
     let _ = app.emit(

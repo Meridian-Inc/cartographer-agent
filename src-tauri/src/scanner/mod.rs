@@ -269,15 +269,26 @@ pub async fn scan_network_with_progress(
         }
     }
 
-    // Ensure the local machine is included in the device list
+    // Ensure the local machine is included in the device list with its hostname
     if let Some(ref local_ip) = network_info.local_ip {
-        if !devices.iter().any(|d| &d.ip == local_ip) {
+        let local_hostname = get_local_hostname();
+        if let Some(existing) = devices.iter_mut().find(|d| &d.ip == local_ip) {
+            // Update existing device with local hostname if not already set
+            if existing.hostname.is_none() {
+                existing.hostname = local_hostname;
+                tracing::info!("Set local hostname for {}: {:?}", local_ip, existing.hostname);
+            }
+            // Ensure local machine has response time set
+            if existing.response_time_ms.is_none() {
+                existing.response_time_ms = Some(0.0);
+            }
+        } else {
             tracing::info!("Adding local machine {} to device list", local_ip);
             devices.push(Device {
                 ip: local_ip.clone(),
                 mac: None,
                 response_time_ms: Some(0.0), // Local machine has instant response
-                hostname: get_local_hostname(),
+                hostname: local_hostname,
             });
         }
     }
@@ -373,12 +384,12 @@ async fn resolve_hostnames_fast(devices: &mut [Device]) {
     const BATCH_SIZE: usize = 32;
 
     // Timeout varies by platform:
-    // - Windows uses nbtstat as fallback which is slower (needs ~2s for NetBIOS timeout)
+    // - Windows uses PowerShell and nbtstat which can be slower
     // - Linux/macOS DNS is typically faster
     #[cfg(target_os = "windows")]
-    const TIMEOUT_MS: u64 = 3000;
+    const TIMEOUT_MS: u64 = 5000;
     #[cfg(not(target_os = "windows"))]
-    const TIMEOUT_MS: u64 = 1500;
+    const TIMEOUT_MS: u64 = 2000;
 
     for chunk in devices.chunks_mut(BATCH_SIZE) {
         let futures: Vec<_> = chunk
@@ -414,128 +425,116 @@ async fn resolve_hostnames_fast(devices: &mut [Device]) {
 /// Fast hostname resolution using system DNS resolver.
 /// Much faster than NetBIOS (nbtstat) on Windows.
 async fn resolve_hostname_fast(ip: &str) -> Option<String> {
-    use std::net::ToSocketAddrs;
-
-    // Use Rust's built-in DNS resolver which is much faster than spawning processes
-    let socket_addr = format!("{}:0", ip);
-
     // Spawn blocking DNS lookup
     let ip_owned = ip.to_string();
     tokio::task::spawn_blocking(move || {
-        // Try to get hostname via reverse DNS
-        if let Ok(mut addrs) = socket_addr.to_socket_addrs() {
-            if let Some(_addr) = addrs.next() {
-                // The to_socket_addrs doesn't give us the hostname directly,
-                // so we need to use getnameinfo or similar
-                #[cfg(any(target_os = "linux", target_os = "macos"))]
-                {
-                    // Try multiple methods for hostname resolution on Linux/macOS:
-                    // 1. getent - uses system resolver (includes /etc/hosts, DNS, mDNS if configured)
-                    // 2. host - reverse DNS lookup
-                    // 3. avahi-resolve (Linux) / dns-sd (macOS) - mDNS/Bonjour
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            // Try multiple methods for hostname resolution on Linux/macOS:
+            // 1. getent - uses system resolver (includes /etc/hosts, DNS, mDNS if configured)
+            // 2. host - reverse DNS lookup
+            // 3. avahi-resolve (Linux) / dns-sd (macOS) - mDNS/Bonjour
 
-                    // Method 1: getent hosts (most comprehensive, uses NSS)
-                    if let Ok(output) = hidden_command_sync("getent")
-                        .args(["hosts", &ip_owned])
-                        .output()
-                    {
-                        if output.status.success() {
-                            let out = String::from_utf8_lossy(&output.stdout);
-                            // Format: "192.168.1.1    hostname.local"
-                            if let Some(hostname) = out.split_whitespace().nth(1) {
-                                if !hostname.is_empty() {
-                                    return Some(hostname.to_string());
-                                }
-                            }
-                        }
-                    }
-
-                    // Method 2: host command for reverse DNS
-                    if let Ok(output) = hidden_command_sync("host")
-                        .arg(&ip_owned)
-                        .output()
-                    {
-                        if output.status.success() {
-                            let out = String::from_utf8_lossy(&output.stdout);
-                            // Parse "X.X.X.X.in-addr.arpa domain name pointer hostname."
-                            if let Some(hostname) = out.split("pointer").nth(1) {
-                                let hostname = hostname.trim().trim_end_matches('.');
-                                if !hostname.is_empty() {
-                                    return Some(hostname.to_string());
-                                }
-                            }
-                        }
-                    }
-
-                    // Method 3: Try avahi-resolve on Linux for mDNS (.local domains)
-                    #[cfg(target_os = "linux")]
-                    if let Ok(output) = hidden_command_sync("avahi-resolve")
-                        .args(["-a", &ip_owned])
-                        .output()
-                    {
-                        if output.status.success() {
-                            let out = String::from_utf8_lossy(&output.stdout);
-                            // Format: "192.168.1.1    hostname.local"
-                            if let Some(hostname) = out.split_whitespace().nth(1) {
-                                if !hostname.is_empty() {
-                                    return Some(hostname.to_string());
-                                }
-                            }
+            // Method 1: getent hosts (most comprehensive, uses NSS)
+            if let Ok(output) = hidden_command_sync("getent")
+                .args(["hosts", &ip_owned])
+                .output()
+            {
+                if output.status.success() {
+                    let out = String::from_utf8_lossy(&output.stdout);
+                    // Format: "192.168.1.1    hostname.local"
+                    if let Some(hostname) = out.split_whitespace().nth(1) {
+                        if !hostname.is_empty() {
+                            return Some(hostname.to_string());
                         }
                     }
                 }
+            }
 
-                #[cfg(target_os = "windows")]
-                {
-                    // Try multiple methods for hostname resolution on Windows:
-                    // 1. nslookup - for devices with proper DNS PTR records
-                    // 2. nbtstat - for Windows devices via NetBIOS (most home networks)
-
-                    // Method 1: nslookup for reverse DNS
-                    if let Ok(output) = hidden_command_sync("nslookup")
-                        .arg(&ip_owned)
-                        .output()
-                    {
-                        if output.status.success() {
-                            let out = String::from_utf8_lossy(&output.stdout);
-                            // Look for "Name:    hostname"
-                            for line in out.lines() {
-                                let trimmed = line.trim();
-                                if trimmed.starts_with("Name:") {
-                                    if let Some(name) = trimmed.strip_prefix("Name:") {
-                                        let hostname = name.trim();
-                                        if !hostname.is_empty() && !hostname.contains(&ip_owned) {
-                                            return Some(hostname.to_string());
-                                        }
-                                    }
-                                }
-                            }
+            // Method 2: host command for reverse DNS
+            if let Ok(output) = hidden_command_sync("host")
+                .arg(&ip_owned)
+                .output()
+            {
+                if output.status.success() {
+                    let out = String::from_utf8_lossy(&output.stdout);
+                    // Parse "X.X.X.X.in-addr.arpa domain name pointer hostname."
+                    if let Some(hostname) = out.split("pointer").nth(1) {
+                        let hostname = hostname.trim().trim_end_matches('.');
+                        if !hostname.is_empty() {
+                            return Some(hostname.to_string());
                         }
                     }
+                }
+            }
 
-                    // Method 2: nbtstat for NetBIOS names (works for most Windows devices)
-                    // This is slower but works on typical home networks without DNS
-                    if let Ok(output) = hidden_command_sync("nbtstat")
-                        .args(["-A", &ip_owned])
-                        .output()
-                    {
-                        let out = String::from_utf8_lossy(&output.stdout);
-                        // Look for lines with "<00>" and "UNIQUE" which indicate the computer name
-                        // Format: "COMPUTER-NAME   <00>  UNIQUE      Registered"
-                        for line in out.lines() {
-                            let trimmed = line.trim();
-                            if trimmed.contains("<00>") && trimmed.contains("UNIQUE") {
-                                if let Some(name) = trimmed.split_whitespace().next() {
-                                    if !name.is_empty() {
-                                        return Some(name.to_string());
-                                    }
-                                }
+            // Method 3: Try avahi-resolve on Linux for mDNS (.local domains)
+            #[cfg(target_os = "linux")]
+            if let Ok(output) = hidden_command_sync("avahi-resolve")
+                .args(["-a", &ip_owned])
+                .output()
+            {
+                if output.status.success() {
+                    let out = String::from_utf8_lossy(&output.stdout);
+                    // Format: "192.168.1.1    hostname.local"
+                    if let Some(hostname) = out.split_whitespace().nth(1) {
+                        if !hostname.is_empty() {
+                            return Some(hostname.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            // Try multiple methods for hostname resolution on Windows:
+            // 1. PowerShell Resolve-DnsName - most reliable for modern Windows
+            // 2. nbtstat - for Windows devices via NetBIOS (most home networks)
+
+            // Method 1: PowerShell Resolve-DnsName for reverse DNS (PTR lookup)
+            if let Ok(output) = hidden_command_sync("powershell")
+                .args([
+                    "-NoProfile",
+                    "-ExecutionPolicy", "Bypass",
+                    "-Command",
+                    &format!(
+                        "try {{ (Resolve-DnsName -Name '{}' -Type PTR -ErrorAction Stop).NameHost }} catch {{ }}",
+                        ip_owned
+                    ),
+                ])
+                .output()
+            {
+                if output.status.success() {
+                    let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !out.is_empty() && !out.contains("error") && !out.contains(&ip_owned) {
+                        return Some(out);
+                    }
+                }
+            }
+
+            // Method 2: nbtstat for NetBIOS names (works for most Windows devices)
+            // This works on typical home networks without proper DNS
+            if let Ok(output) = hidden_command_sync("nbtstat")
+                .args(["-A", &ip_owned])
+                .output()
+            {
+                let out = String::from_utf8_lossy(&output.stdout);
+                // Look for lines with "<00>" and "UNIQUE" which indicate the computer name
+                // Format: "COMPUTER-NAME   <00>  UNIQUE      Registered"
+                for line in out.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.contains("<00>") && trimmed.contains("UNIQUE") {
+                        if let Some(name) = trimmed.split_whitespace().next() {
+                            if !name.is_empty() {
+                                return Some(name.to_string());
                             }
                         }
                     }
                 }
             }
         }
+
         None
     })
     .await
@@ -545,79 +544,95 @@ async fn resolve_hostname_fast(ip: &str) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 async fn get_windows_network_info_full() -> Result<NetworkInfo> {
-    // Try PowerShell first (more reliable for getting complete info)
-    if let Ok(info) = get_windows_network_info_powershell().await {
+    // Use ipconfig first - it correctly parses the subnet mask from Windows
+    // PowerShell cmdlets can return incorrect prefix lengths in some configurations
+    if let Ok(info) = get_windows_network_info_ipconfig().await {
         // Validate the result - check for 0.0.0.0 which indicates failure
         if !info.subnet.starts_with("0.0.0.0") && !info.subnet.is_empty() {
             return Ok(info);
         }
-        tracing::warn!("PowerShell returned invalid subnet: {}", info.subnet);
+        tracing::warn!("ipconfig returned invalid subnet: {}", info.subnet);
     }
 
-    // Fallback to ipconfig parsing
-    tracing::info!("Falling back to ipconfig for network detection");
-    get_windows_network_info_ipconfig().await
+    // Fallback to PowerShell
+    tracing::info!("Falling back to PowerShell for network detection");
+    get_windows_network_info_powershell().await
 }
 
 #[cfg(target_os = "windows")]
 async fn get_windows_network_info_powershell() -> Result<NetworkInfo> {
-    // Get default gateway and interface using PowerShell
-    // Filter out virtual adapters (WSL, Hyper-V, VirtualBox, VMware, Docker, Tailscale)
+    // Get network info using Get-NetRoute to find the default gateway, then look up the interface
+    // This is more reliable than Get-NetIPConfiguration for getting correct subnet info
     let output = hidden_command("powershell")
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", r#"
-            # Get all adapters with a gateway, excluding virtual/VPN adapters
+            # Virtual adapter patterns to exclude
             $virtualPatterns = @('vEthernet', 'WSL', 'Hyper-V', 'VirtualBox', 'VMware', 'Docker', 'Loopback', 'Tailscale')
-            $adapters = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null }
             
-            # Filter out virtual adapters
-            $physicalAdapter = $null
-            foreach ($adapter in $adapters) {
+            # Find the default route (0.0.0.0/0) to get the primary interface
+            $defaultRoute = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | 
+                Where-Object { $_.NextHop -ne '0.0.0.0' } |
+                Select-Object -First 1
+            
+            if ($defaultRoute) {
+                $ifIndex = $defaultRoute.InterfaceIndex
+                $gateway = $defaultRoute.NextHop
+                
+                # Get the interface name
+                $adapter = Get-NetAdapter -InterfaceIndex $ifIndex -ErrorAction SilentlyContinue
+                $iface = $adapter.InterfaceAlias
+                
+                # Check if this is a virtual adapter
                 $isVirtual = $false
                 foreach ($pattern in $virtualPatterns) {
-                    if ($adapter.InterfaceAlias -like "*$pattern*") {
+                    if ($iface -like "*$pattern*") {
                         $isVirtual = $true
                         break
                     }
                 }
-                if (-not $isVirtual) {
-                    $physicalAdapter = $adapter
-                    break
-                }
-            }
-            
-            # If no physical adapter found, try any adapter as fallback
-            if ($physicalAdapter -eq $null -and $adapters.Count -gt 0) {
-                $physicalAdapter = $adapters | Select-Object -First 1
-            }
-            
-            if ($physicalAdapter) {
-                # Handle IPv4Address being an array - get first element
-                $ipv4Addr = $physicalAdapter.IPv4Address
-                if ($ipv4Addr -is [array]) {
-                    $ipv4Addr = $ipv4Addr[0]
-                }
-                $ip = $ipv4Addr.IPAddress
-                $prefix = $ipv4Addr.PrefixLength
-                $iface = $physicalAdapter.InterfaceAlias
                 
-                # Handle gateway being an array too
-                $gw = $physicalAdapter.IPv4DefaultGateway
-                if ($gw -is [array]) {
-                    $gw = $gw[0]
+                # If virtual, try to find a physical adapter with a gateway
+                if ($isVirtual) {
+                    $physicalRoute = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+                        Where-Object { $_.NextHop -ne '0.0.0.0' } |
+                        ForEach-Object {
+                            $a = Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue
+                            $skip = $false
+                            foreach ($p in $virtualPatterns) {
+                                if ($a.InterfaceAlias -like "*$p*") { $skip = $true; break }
+                            }
+                            if (-not $skip) { $_ }
+                        } |
+                        Select-Object -First 1
+                    
+                    if ($physicalRoute) {
+                        $ifIndex = $physicalRoute.InterfaceIndex
+                        $gateway = $physicalRoute.NextHop
+                        $adapter = Get-NetAdapter -InterfaceIndex $ifIndex -ErrorAction SilentlyContinue
+                        $iface = $adapter.InterfaceAlias
+                    }
                 }
-                $gateway = $gw.NextHop
                 
-                # Calculate network address
-                $ipBytes = [System.Net.IPAddress]::Parse($ip).GetAddressBytes()
-                $maskInt = [uint32](0xFFFFFFFF -shl (32 - $prefix))
-                $maskBytes = [BitConverter]::GetBytes($maskInt)
-                [Array]::Reverse($maskBytes)
-                $networkBytes = @()
-                for ($i = 0; $i -lt 4; $i++) {
-                    $networkBytes += $ipBytes[$i] -band $maskBytes[$i]
+                # Get the IP address info for this interface - use Get-NetIPAddress for accurate prefix
+                $ipInfo = Get-NetIPAddress -InterfaceIndex $ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                    Where-Object { $_.PrefixOrigin -ne 'WellKnown' -and $_.IPAddress -notlike '169.254.*' } |
+                    Select-Object -First 1
+                
+                if ($ipInfo) {
+                    $ip = $ipInfo.IPAddress
+                    $prefix = $ipInfo.PrefixLength
+                    
+                    # Calculate network address
+                    $ipBytes = [System.Net.IPAddress]::Parse($ip).GetAddressBytes()
+                    $maskInt = [uint32](0xFFFFFFFF -shl (32 - $prefix))
+                    $maskBytes = [BitConverter]::GetBytes($maskInt)
+                    [Array]::Reverse($maskBytes)
+                    $networkBytes = @()
+                    for ($i = 0; $i -lt 4; $i++) {
+                        $networkBytes += $ipBytes[$i] -band $maskBytes[$i]
+                    }
+                    $network = [System.Net.IPAddress]::new($networkBytes)
+                    Write-Output "$iface|$network/$prefix|$gateway|$ip"
                 }
-                $network = [System.Net.IPAddress]::new($networkBytes)
-                Write-Output "$iface|$network/$prefix|$gateway|$ip"
             }
         "#])
         .output()
@@ -668,47 +683,91 @@ async fn get_windows_network_info_ipconfig() -> Result<NetworkInfo> {
 
     // Virtual adapter patterns to skip
     let virtual_patterns = ["vEthernet", "WSL", "Hyper-V", "VirtualBox", "VMware", "Docker", "Loopback", "Tailscale"];
-    let mut is_virtual_adapter = false;
+    
+    // First pass: collect all adapter info
+    struct AdapterInfo {
+        name: String,
+        ip: Option<String>,
+        mask: Option<String>,
+        gateway: Option<String>,
+        is_virtual: bool,
+    }
+    
+    let mut adapters: Vec<AdapterInfo> = Vec::new();
+    let mut current = AdapterInfo {
+        name: String::new(),
+        ip: None,
+        mask: None,
+        gateway: None,
+        is_virtual: false,
+    };
     
     for line in output_str.lines() {
         let trimmed = line.trim();
         
         // Detect adapter name (lines that end with ":")
         if line.starts_with("Ethernet adapter") || line.starts_with("Wireless LAN adapter") {
-            current_adapter = line.trim_end_matches(':').to_string();
-            // Check if this is a virtual adapter
-            is_virtual_adapter = virtual_patterns.iter().any(|p| current_adapter.contains(p));
+            // Save previous adapter if it had an IP
+            if current.ip.is_some() {
+                adapters.push(current);
+            }
+            let name = line.trim_end_matches(':').to_string();
+            let is_virtual = virtual_patterns.iter().any(|p| name.contains(p));
+            current = AdapterInfo {
+                name,
+                ip: None,
+                mask: None,
+                gateway: None,
+                is_virtual,
+            };
         }
         
-        // Look for IPv4 Address (skip virtual adapters)
-        if !is_virtual_adapter && (trimmed.starts_with("IPv4 Address") || trimmed.starts_with("IP Address")) {
+        // Look for IPv4 Address
+        if trimmed.starts_with("IPv4 Address") || trimmed.starts_with("IP Address") {
             if let Some(ip) = trimmed.split(':').nth(1) {
                 let ip = ip.trim().trim_start_matches(". ");
                 // Skip loopback and APIPA addresses
                 if !ip.starts_with("127.") && !ip.starts_with("169.254.") {
-                    local_ip = Some(ip.to_string());
-                    interface = current_adapter.clone();
-                    found_active_adapter = true;
+                    current.ip = Some(ip.to_string());
                 }
             }
         }
         
         // Look for Subnet Mask
-        if found_active_adapter && trimmed.starts_with("Subnet Mask") {
+        if trimmed.starts_with("Subnet Mask") {
             if let Some(mask) = trimmed.split(':').nth(1) {
-                subnet_mask = Some(mask.trim().trim_start_matches(". ").to_string());
+                current.mask = Some(mask.trim().trim_start_matches(". ").to_string());
             }
         }
         
         // Look for Default Gateway
-        if found_active_adapter && trimmed.starts_with("Default Gateway") {
+        if trimmed.starts_with("Default Gateway") {
             if let Some(gw) = trimmed.split(':').nth(1) {
                 let gw = gw.trim().trim_start_matches(". ");
                 if !gw.is_empty() {
-                    gateway_ip = Some(gw.to_string());
+                    current.gateway = Some(gw.to_string());
                 }
             }
         }
+    }
+    
+    // Don't forget the last adapter
+    if current.ip.is_some() {
+        adapters.push(current);
+    }
+    
+    // Find the best adapter: non-virtual with a gateway, preferring ones with gateway
+    let best_adapter = adapters.iter()
+        .filter(|a| !a.is_virtual && a.ip.is_some() && a.gateway.is_some())
+        .next()
+        .or_else(|| adapters.iter().filter(|a| !a.is_virtual && a.ip.is_some()).next());
+    
+    if let Some(adapter) = best_adapter {
+        local_ip = adapter.ip.clone();
+        subnet_mask = adapter.mask.clone();
+        gateway_ip = adapter.gateway.clone();
+        interface = adapter.name.clone();
+        found_active_adapter = true;
     }
 
     // Calculate subnet from IP and mask

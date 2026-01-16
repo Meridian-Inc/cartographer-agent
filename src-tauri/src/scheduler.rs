@@ -114,6 +114,42 @@ pub async fn update_known_devices(devices: Vec<Device>) {
     *known = devices;
 }
 
+/// Merge new devices with existing ones, preserving health data from previous health checks.
+/// For devices that exist in both lists:
+/// - If the new device has no response_time_ms, preserve the old one
+/// - If the new device has response_time_ms, use the new value
+/// New devices are added, old devices not in the new list are removed.
+pub async fn merge_devices_preserving_health(new_devices: Vec<Device>) {
+    let mut known = KNOWN_DEVICES.lock().await;
+    
+    // Create a map of IP -> old device for quick lookup
+    let old_device_map: std::collections::HashMap<String, &Device> = 
+        known.iter().map(|d| (d.ip.clone(), d)).collect();
+    
+    // Merge: for each new device, preserve old health data if new doesn't have it
+    let merged: Vec<Device> = new_devices
+        .into_iter()
+        .map(|mut new_device| {
+            if let Some(old_device) = old_device_map.get(&new_device.ip) {
+                // If new device has no response time data (or is 0 from ARP), 
+                // preserve old health data
+                if new_device.response_time_ms.is_none() || new_device.response_time_ms == Some(0.0) {
+                    if old_device.response_time_ms.is_some() {
+                        new_device.response_time_ms = old_device.response_time_ms;
+                    }
+                }
+                // Also preserve hostname if new doesn't have one
+                if new_device.hostname.is_none() && old_device.hostname.is_some() {
+                    new_device.hostname = old_device.hostname.clone();
+                }
+            }
+            new_device
+        })
+        .collect();
+    
+    *known = merged;
+}
+
 /// Get current known devices
 pub async fn get_known_devices() -> Vec<Device> {
     KNOWN_DEVICES.lock().await.clone()
@@ -201,8 +237,8 @@ async fn run_scan_and_upload(app: &AppHandle) {
             // Record scan time
             record_scan_time();
 
-            // Update known devices for health checks
-            update_known_devices(scan_result.devices.clone()).await;
+            // Merge new devices with existing ones, preserving health data
+            merge_devices_preserving_health(scan_result.devices.clone()).await;
 
             // Persist to disk
             persist_state().await;
@@ -484,7 +520,7 @@ pub async fn start_background_scanning(app: AppHandle) {
                 continue;
             }
 
-            run_health_checks_and_upload(&app_health).await;
+            run_health_checks_with_progress(&app_health).await;
         }
     });
 }

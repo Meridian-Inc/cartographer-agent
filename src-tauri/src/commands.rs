@@ -5,7 +5,7 @@ use crate::scanner::{
 };
 use crate::scheduler::{
     clear_scan_cancel, ensure_background_scanning, get_known_devices, get_last_scan_time,
-    is_scanning, persist_state, record_scan_time, request_scan_cancel,
+    is_scanning, merge_devices_preserving_health, persist_state, record_scan_time, request_scan_cancel,
     set_scan_interval as scheduler_set_scan_interval, update_known_devices, DeviceHealthResult,
 };
 use serde::{Deserialize, Serialize};
@@ -208,8 +208,8 @@ pub async fn scan_network(app: AppHandle) -> Result<Vec<Device>, String> {
     // Record scan time
     record_scan_time();
 
-    // Update known devices for health checks
-    update_known_devices(scan_result.devices.clone()).await;
+    // Merge new devices with existing ones, preserving health data from previous health checks
+    merge_devices_preserving_health(scan_result.devices.clone()).await;
 
     // Persist to disk
     persist_state().await;

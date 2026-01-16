@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.0](https://github.com/Meridian-Inc/cartographer-agent/compare/v1.8.0...v2.0.0) (2026-01-16)
 
+### Version 1 Release
+* First officially supported version release of Cartographer Agent. Agent supports
+  * Connection to Cartographer Cloud
+  * Automatic scanning and health checks
+  * Functionality on Windows, Mac, and Linux
+  * Friendly UI to view scan results
+  * Can be downloaded at [https://cartographer.network/#download](https://cartographer.network/#download)
+
 ## [1.8.0](https://github.com/Meridian-Inc/cartographer-agent/compare/v1.7.5...v1.8.0) (2026-01-16)
 
 

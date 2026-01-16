@@ -5,6 +5,13 @@ All notable changes to Cartographer Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+### [1.7.1](https://github.com/Meridian-Inc/cartographer-agent/compare/v1.7.0...v1.7.1) (2026-01-16)
+
+
+### 🐛 Bug Fixes
+
+* major overhaul of primary systems to fix cursorisms (maybe) ([3e0ed5d](https://github.com/Meridian-Inc/cartographer-agent/commit/3e0ed5d6de39934d58de05fa34689f5b3c50fdee))
+
 ## [1.7.0](https://github.com/Meridian-Inc/cartographer-agent/compare/v1.6.5...v1.7.0) (2026-01-16)
 
 

@@ -1,4 +1,4 @@
-use crate::cloud::CloudClient;
+use crate::cloud::{CloudClient, TokenVerifyResult};
 use anyhow::{Context, Result};
 use dirs;
 use serde::{Deserialize, Serialize};
@@ -125,20 +125,50 @@ pub async fn check_auth() -> Result<AuthStatus> {
         // Verify token is still valid by making a test API call
         let client = CloudClient::new();
         match client.verify_token(&creds.access_token).await {
-            Ok(true) => Ok(AuthStatus {
-                authenticated: true,
-                user_email: Some(creds.user_email),
-                network_id: Some(creds.network_id),
-                network_name: Some(creds.network_name),
-            }),
-            Ok(false) | Err(_) => {
-                // Token invalid, delete credentials
+            Ok(TokenVerifyResult::Valid) => {
+                tracing::debug!("Token verified successfully");
+                Ok(AuthStatus {
+                    authenticated: true,
+                    user_email: Some(creds.user_email),
+                    network_id: Some(creds.network_id),
+                    network_name: Some(creds.network_name),
+                })
+            }
+            Ok(TokenVerifyResult::Invalid) => {
+                // Token was explicitly rejected by server (401/403)
+                // This means the token is definitely invalid, so delete credentials
+                tracing::warn!("Token rejected by server, clearing credentials");
                 let _ = delete_credentials().await;
                 Ok(AuthStatus {
                     authenticated: false,
                     user_email: None,
                     network_id: None,
                     network_name: None,
+                })
+            }
+            Ok(TokenVerifyResult::NetworkError(reason)) => {
+                // Could not reach server - this is NOT an auth failure
+                // Keep credentials and assume still authenticated
+                // The next upload will fail but that's handled separately
+                tracing::info!(
+                    "Could not verify token ({}), assuming still authenticated",
+                    reason
+                );
+                Ok(AuthStatus {
+                    authenticated: true,
+                    user_email: Some(creds.user_email),
+                    network_id: Some(creds.network_id),
+                    network_name: Some(creds.network_name),
+                })
+            }
+            Err(e) => {
+                // Error building the request - treat as network error
+                tracing::warn!("Error verifying token: {}, assuming still authenticated", e);
+                Ok(AuthStatus {
+                    authenticated: true,
+                    user_email: Some(creds.user_email),
+                    network_id: Some(creds.network_id),
+                    network_name: Some(creds.network_name),
                 })
             }
         }

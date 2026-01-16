@@ -21,6 +21,9 @@ pub struct HealthCheckProgress {
     pub total_devices: usize,
     pub checked_devices: usize,
     pub healthy_devices: usize,
+    /// Whether the health check was successfully synced to cloud (only set on Complete stage)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synced_to_cloud: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -357,6 +360,7 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
                 total_devices: 0,
                 checked_devices: 0,
                 healthy_devices: 0,
+                synced_to_cloud: Some(false),
             },
         );
         return;
@@ -373,6 +377,7 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
             total_devices: total,
             checked_devices: 0,
             healthy_devices: 0,
+            synced_to_cloud: None,
         },
     );
 
@@ -388,14 +393,14 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
         let result = check_device_reachable(&device.ip, &arp_ips).await;
         let reachable = result.is_ok();
         let response_time = if reachable { result.ok() } else { None };
-        
+
         if reachable {
             healthy_count += 1;
         }
-        
+
         // Update the device's response time
         device.response_time_ms = response_time;
-        
+
         health_results.push(DeviceHealthResult {
             ip: device.ip.clone(),
             reachable,
@@ -411,6 +416,7 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
                 total_devices: total,
                 checked_devices: i + 1,
                 healthy_devices: healthy_count,
+                synced_to_cloud: None,
             },
         );
     }
@@ -430,20 +436,28 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
             total_devices: total,
             checked_devices: total,
             healthy_devices: healthy_count,
+            synced_to_cloud: None,
         },
     );
 
     // Upload health results to cloud if authenticated
+    let mut synced = false;
     if let Ok(status) = check_auth().await {
         if status.authenticated {
             let client = CloudClient::new();
-            if let Err(e) = client.upload_health_check(&health_results).await {
-                tracing::debug!("Failed to upload health check: {}", e);
+            match client.upload_health_check(&health_results).await {
+                Ok(_) => {
+                    tracing::debug!("Health check results synced to cloud");
+                    synced = true;
+                }
+                Err(e) => {
+                    tracing::debug!("Failed to upload health check: {}", e);
+                }
             }
         }
     }
 
-    // Emit complete event
+    // Emit complete event with actual sync status
     let _ = app.emit(
         HEALTH_CHECK_PROGRESS_EVENT,
         HealthCheckProgress {
@@ -456,6 +470,7 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
             total_devices: total,
             checked_devices: total,
             healthy_devices: healthy_count,
+            synced_to_cloud: Some(synced),
         },
     );
 

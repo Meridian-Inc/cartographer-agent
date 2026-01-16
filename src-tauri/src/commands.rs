@@ -27,6 +27,14 @@ pub struct AgentStatus {
     pub scanning_in_progress: bool,
 }
 
+/// Result of a network scan, including devices and sync status
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanResultResponse {
+    pub devices: Vec<Device>,
+    pub synced_to_cloud: bool,
+}
+
 static CLOUD_CLIENT: Mutex<Option<Arc<CloudClient>>> = Mutex::const_new(None);
 
 async fn get_cloud_client() -> Arc<CloudClient> {
@@ -171,7 +179,7 @@ pub async fn cancel_scan() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn scan_network(app: AppHandle) -> Result<Vec<Device>, String> {
+pub async fn scan_network(app: AppHandle) -> Result<ScanResultResponse, String> {
     // Clear any previous cancel request
     clear_scan_cancel();
 
@@ -218,6 +226,7 @@ pub async fn scan_network(app: AppHandle) -> Result<Vec<Device>, String> {
     persist_state().await;
 
     // Upload to cloud if authenticated
+    let mut synced = false;
     match check_auth().await {
         Ok(status) if status.authenticated => {
             tracing::info!(
@@ -226,8 +235,14 @@ pub async fn scan_network(app: AppHandle) -> Result<Vec<Device>, String> {
                 status.network_name.as_deref().unwrap_or("Unknown")
             );
             let client = get_cloud_client().await;
-            if let Err(e) = client.upload_scan_result(&scan_result).await {
-                tracing::warn!("Failed to upload scan to cloud: {}", e);
+            match client.upload_scan_result(&scan_result).await {
+                Ok(_) => {
+                    tracing::info!("Scan results synced to cloud");
+                    synced = true;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to upload scan to cloud: {}", e);
+                }
             }
         }
         Ok(_) => {
@@ -238,7 +253,10 @@ pub async fn scan_network(app: AppHandle) -> Result<Vec<Device>, String> {
         }
     }
 
-    Ok(scan_result.devices)
+    Ok(ScanResultResponse {
+        devices: scan_result.devices,
+        synced_to_cloud: synced,
+    })
 }
 
 #[tauri::command]

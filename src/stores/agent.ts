@@ -46,6 +46,14 @@ export interface HealthCheckProgress {
   totalDevices: number
   checkedDevices: number
   healthyDevices: number
+  /** Whether the health check was synced to cloud (only present on 'complete' stage) */
+  syncedToCloud?: boolean
+}
+
+/** Response from scan_network command */
+export interface ScanResultResponse {
+  devices: Device[]
+  syncedToCloud: boolean
 }
 
 export interface LoginFlowResponse {
@@ -221,13 +229,13 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
-  async function scanNow() {
+  async function scanNow(): Promise<ScanResultResponse> {
     scanning.value = true
     scanProgress.value = null
     try {
-      const result = await invoke<Device[]>('scan_network')
+      const result = await invoke<ScanResultResponse>('scan_network')
       // Force update by creating a new array reference
-      devices.value = [...result]
+      devices.value = [...result.devices]
       await refreshStatus()
       return result
     } catch (error) {

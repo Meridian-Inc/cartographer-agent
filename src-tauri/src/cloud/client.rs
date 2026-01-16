@@ -74,18 +74,41 @@ impl CloudClient {
         }
     }
 
-    pub async fn verify_token(&self, token: &str) -> Result<bool> {
+    /// Result of token verification
+    /// - Ok(TokenVerifyResult::Valid) - token is valid
+    /// - Ok(TokenVerifyResult::Invalid) - token was rejected by server (401/403)
+    /// - Ok(TokenVerifyResult::NetworkError) - couldn't reach server
+    pub async fn verify_token(&self, token: &str) -> Result<TokenVerifyResult> {
         let url = format!("{}/agent/verify", self.base_url);
-        
-        let client = reqwest::Client::new();
-        let resp = client
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .context("Failed to build HTTP client")?;
+
+        let resp = match client
             .get(&url)
             .bearer_auth(token)
             .send()
             .await
-            .context("Failed to verify token")?;
-        
-        Ok(resp.status().is_success())
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // Network error - could not reach server
+                tracing::debug!("Token verification network error: {}", e);
+                return Ok(TokenVerifyResult::NetworkError(e.to_string()));
+            }
+        };
+
+        match resp.status().as_u16() {
+            200 => Ok(TokenVerifyResult::Valid),
+            401 | 403 => Ok(TokenVerifyResult::Invalid),
+            status => {
+                // Treat other errors (500, etc.) as transient network issues
+                tracing::debug!("Token verification returned status {}", status);
+                Ok(TokenVerifyResult::NetworkError(format!("Server returned {}", status)))
+            }
+        }
     }
 
     /// Upload scan results to the cloud, including gateway detection and network info.
@@ -268,6 +291,17 @@ impl CloudClient {
         webbrowser::open(&url)
             .context("Failed to open dashboard in browser")
     }
+}
+
+/// Result of token verification attempt
+#[derive(Debug, Clone)]
+pub enum TokenVerifyResult {
+    /// Token is valid
+    Valid,
+    /// Token was explicitly rejected by the server (401/403)
+    Invalid,
+    /// Could not reach the server (network error, timeout, server error)
+    NetworkError(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]

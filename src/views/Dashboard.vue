@@ -233,6 +233,13 @@
               </svg>
               Synced
             </span>
+            <span v-else class="text-amber-400 text-sm flex items-center gap-1.5" title="Could not connect to cloud. Data saved locally.">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636l-12.728 12.728" />
+              </svg>
+              Sync failed
+            </span>
           </div>
         </div>
 
@@ -497,13 +504,13 @@ function formatHealthCheckTime(timestamp: string): string {
 
 async function handleScan() {
   try {
-    await agentStore.scanNow()
+    const scanResult = await agentStore.scanNow()
     // Refresh status and devices to ensure UI is in sync
     await agentStore.refreshStatus()
     await agentStore.loadDevices()
     // Clear health status when scanning new devices
     healthStatus.value = null
-    
+
     // Update last operation result
     const stats = deviceHealthStats.value
     lastOperationResult.value = {
@@ -511,7 +518,7 @@ async function handleScan() {
       totalDevices: devices.value.length,
       healthyDevices: stats.healthy + stats.degraded, // Count degraded as reachable
       unreachableDevices: stats.offline,
-      syncedToCloud: true,
+      syncedToCloud: scanResult.syncedToCloud,
       timestamp: new Date().toISOString()
     }
   } catch (error) {
@@ -612,7 +619,7 @@ onMounted(async () => {
   // to update lastOperationResult when health checks complete
   healthCheckUnlisten = await listen<HealthCheckProgress>('health-check-progress', (event) => {
     const progress = event.payload
-    
+
     // When a health check completes (from background or manual), update lastOperationResult
     if (progress.stage === 'complete') {
       lastOperationResult.value = {
@@ -620,7 +627,7 @@ onMounted(async () => {
         totalDevices: progress.totalDevices,
         healthyDevices: progress.healthyDevices,
         unreachableDevices: progress.totalDevices - progress.healthyDevices,
-        syncedToCloud: true,
+        syncedToCloud: progress.syncedToCloud ?? false,
         timestamp: new Date().toISOString()
       }
     }

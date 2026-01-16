@@ -562,11 +562,11 @@ async fn get_windows_network_info_full() -> Result<NetworkInfo> {
 #[cfg(target_os = "windows")]
 async fn get_windows_network_info_powershell() -> Result<NetworkInfo> {
     // Get default gateway and interface using PowerShell
-    // Filter out virtual adapters (WSL, Hyper-V, VirtualBox, VMware, Docker)
+    // Filter out virtual adapters (WSL, Hyper-V, VirtualBox, VMware, Docker, Tailscale)
     let output = hidden_command("powershell")
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", r#"
-            # Get all adapters with a gateway, excluding virtual/WSL adapters
-            $virtualPatterns = @('vEthernet', 'WSL', 'Hyper-V', 'VirtualBox', 'VMware', 'Docker', 'Loopback')
+            # Get all adapters with a gateway, excluding virtual/VPN adapters
+            $virtualPatterns = @('vEthernet', 'WSL', 'Hyper-V', 'VirtualBox', 'VMware', 'Docker', 'Loopback', 'Tailscale')
             $adapters = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null }
             
             # Filter out virtual adapters
@@ -591,10 +591,22 @@ async fn get_windows_network_info_powershell() -> Result<NetworkInfo> {
             }
             
             if ($physicalAdapter) {
-                $ip = $physicalAdapter.IPv4Address.IPAddress
-                $prefix = $physicalAdapter.IPv4Address.PrefixLength
+                # Handle IPv4Address being an array - get first element
+                $ipv4Addr = $physicalAdapter.IPv4Address
+                if ($ipv4Addr -is [array]) {
+                    $ipv4Addr = $ipv4Addr[0]
+                }
+                $ip = $ipv4Addr.IPAddress
+                $prefix = $ipv4Addr.PrefixLength
                 $iface = $physicalAdapter.InterfaceAlias
-                $gateway = $physicalAdapter.IPv4DefaultGateway.NextHop
+                
+                # Handle gateway being an array too
+                $gw = $physicalAdapter.IPv4DefaultGateway
+                if ($gw -is [array]) {
+                    $gw = $gw[0]
+                }
+                $gateway = $gw.NextHop
+                
                 # Calculate network address
                 $ipBytes = [System.Net.IPAddress]::Parse($ip).GetAddressBytes()
                 $maskInt = [uint32](0xFFFFFFFF -shl (32 - $prefix))
@@ -655,7 +667,7 @@ async fn get_windows_network_info_ipconfig() -> Result<NetworkInfo> {
     let mut found_active_adapter = false;
 
     // Virtual adapter patterns to skip
-    let virtual_patterns = ["vEthernet", "WSL", "Hyper-V", "VirtualBox", "VMware", "Docker", "Loopback"];
+    let virtual_patterns = ["vEthernet", "WSL", "Hyper-V", "VirtualBox", "VMware", "Docker", "Loopback", "Tailscale"];
     let mut is_virtual_adapter = false;
     
     for line in output_str.lines() {

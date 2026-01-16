@@ -78,6 +78,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::check_auth_status,
             commands::start_login_flow,
+            commands::request_login,
+            commands::complete_login,
             commands::logout,
             commands::scan_network,
             commands::get_agent_status,

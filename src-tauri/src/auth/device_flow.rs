@@ -1,7 +1,7 @@
 use crate::auth::credentials::{save_credentials, Credentials};
 use crate::cloud::CloudClient;
 use anyhow::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -13,44 +13,59 @@ pub struct LoginUrlEvent {
     pub user_code: String,
 }
 
-pub async fn start_login<F>(emit_url: Option<F>) -> Result<crate::auth::credentials::AuthStatus>
-where
-    F: Fn(LoginUrlEvent) + Send + Sync,
-{
+/// Response from starting the login flow - includes the URL for manual access
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginFlowStarted {
+    pub verification_url: String,
+    pub user_code: String,
+    pub device_code: String,
+    pub expires_in: u64,
+    pub poll_interval: u64,
+}
+
+/// Start the login flow and return the verification URL immediately.
+/// This allows the frontend to display the URL to the user right away.
+pub async fn request_login_url() -> Result<LoginFlowStarted> {
     let client = CloudClient::new();
 
-    // Step 1: Request device code
+    // Request device code from cloud
     let device_code_resp = client.request_device_code().await
         .context("Failed to request device code")?;
 
-    // Step 2: Open browser - use the verification_uri from the response
+    // Build the verification URL with the user code
     let url = format!("{}?code={}", device_code_resp.verification_uri, device_code_resp.user_code);
 
-    tracing::info!("Opening browser for authentication: {}", url);
+    tracing::info!("Login URL generated: {}", url);
 
-    // Emit the URL to frontend so user can click if browser doesn't open
-    if let Some(emit) = &emit_url {
-        emit(LoginUrlEvent {
-            verification_url: url.clone(),
-            user_code: device_code_resp.user_code.clone(),
-        });
-    }
-
-    // Open browser
+    // Try to open browser automatically
     if let Err(e) = webbrowser::open(&url) {
-        tracing::warn!("Failed to open browser: {}. Please visit: {}", e, url);
+        tracing::warn!("Failed to open browser automatically: {}. User can use the manual link.", e);
     }
+
+    Ok(LoginFlowStarted {
+        verification_url: url,
+        user_code: device_code_resp.user_code,
+        device_code: device_code_resp.device_code,
+        expires_in: device_code_resp.expires_in,
+        poll_interval: device_code_resp.interval.unwrap_or(5),
+    })
+}
+
+/// Poll for token completion. Call this after request_login_url.
+/// Returns the auth status when the user completes authorization.
+pub async fn poll_for_login(device_code: &str, expires_in: u64, poll_interval: u64) -> Result<crate::auth::credentials::AuthStatus> {
+    let client = CloudClient::new();
     
-    // Step 3: Poll for token
-    let poll_interval = Duration::from_secs(device_code_resp.interval.unwrap_or(5));
-    let expires_at = std::time::Instant::now() + Duration::from_secs(device_code_resp.expires_in);
+    let poll_interval_duration = Duration::from_secs(poll_interval);
+    let expires_at = std::time::Instant::now() + Duration::from_secs(expires_in);
     
     loop {
         if std::time::Instant::now() > expires_at {
             return Err(anyhow::anyhow!("Device code expired. Please try again."));
         }
         
-        match client.poll_for_token(&device_code_resp.device_code).await {
+        match client.poll_for_token(device_code).await {
             Ok(Some(token_resp)) => {
                 // Success! Save credentials with network info
                 let expires_at = token_resp.expires_in
@@ -85,12 +100,32 @@ where
             }
             Ok(None) => {
                 // Still waiting for user authorization
-                sleep(poll_interval).await;
+                sleep(poll_interval_duration).await;
             }
             Err(e) => {
                 return Err(e.context("Failed to poll for token"));
             }
         }
     }
+}
+
+/// Legacy function - start login with event callback (kept for compatibility)
+pub async fn start_login<F>(emit_url: Option<F>) -> Result<crate::auth::credentials::AuthStatus>
+where
+    F: Fn(LoginUrlEvent) + Send + Sync,
+{
+    // Get the login URL first
+    let login_info = request_login_url().await?;
+
+    // Emit the URL to frontend so user can click if browser doesn't open
+    if let Some(emit) = &emit_url {
+        emit(LoginUrlEvent {
+            verification_url: login_info.verification_url.clone(),
+            user_code: login_info.user_code.clone(),
+        });
+    }
+
+    // Poll for completion
+    poll_for_login(&login_info.device_code, login_info.expires_in, login_info.poll_interval).await
 }
 

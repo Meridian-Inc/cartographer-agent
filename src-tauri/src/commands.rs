@@ -1,4 +1,4 @@
-use crate::auth::{check_auth, logout as auth_logout, start_login, LoginUrlEvent};
+use crate::auth::{check_auth, logout as auth_logout, poll_for_login, request_login_url, start_login, LoginFlowStarted, LoginUrlEvent};
 use crate::cloud::CloudClient;
 use crate::persistence::update_device_health;
 use crate::scanner::{
@@ -69,6 +69,59 @@ pub async fn start_login_flow(app: AppHandle) -> Result<AgentStatus, String> {
     };
 
     match start_login(Some(emit_url)).await {
+        Ok(status) => {
+            // Start background scanning if authenticated
+            if status.authenticated {
+                tracing::info!("Login successful, starting background scanning");
+                ensure_background_scanning().await;
+            }
+            Ok(AgentStatus {
+                authenticated: status.authenticated,
+                user_email: status.user_email,
+                network_id: status.network_id,
+                network_name: status.network_name,
+                last_scan: get_last_scan_time(),
+                next_scan: None,
+                device_count: None,
+                scanning_in_progress: is_scanning(),
+            })
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Response for the login flow that includes the verification URL
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginFlowResponse {
+    pub verification_url: String,
+    pub user_code: String,
+    pub device_code: String,
+    pub expires_in: u64,
+    pub poll_interval: u64,
+}
+
+/// Start the login flow and return the verification URL immediately.
+/// This allows the frontend to show the URL to the user right away.
+#[tauri::command]
+pub async fn request_login() -> Result<LoginFlowResponse, String> {
+    match request_login_url().await {
+        Ok(info) => Ok(LoginFlowResponse {
+            verification_url: info.verification_url,
+            user_code: info.user_code,
+            device_code: info.device_code,
+            expires_in: info.expires_in,
+            poll_interval: info.poll_interval,
+        }),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Poll for login completion. Call this after request_login.
+/// This will block until the user completes authorization or the code expires.
+#[tauri::command]
+pub async fn complete_login(device_code: String, expires_in: u64, poll_interval: u64) -> Result<AgentStatus, String> {
+    match poll_for_login(&device_code, expires_in, poll_interval).await {
         Ok(status) => {
             // Start background scanning if authenticated
             if status.authenticated {

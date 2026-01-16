@@ -139,7 +139,8 @@
         </h2>
         <div class="text-sm text-gray-400">
           <p>Cartographer Agent</p>
-          <p class="text-xs text-gray-500 mt-1">Lightweight network scanner with cloud sync</p>
+          <p class="font-mono text-xs text-gray-500 mt-1">Version {{ appVersion || 'Loading...' }}</p>
+          <p class="text-xs text-gray-500 mt-2">Lightweight network scanner with cloud sync</p>
         </div>
       </div>
     </div>
@@ -151,6 +152,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
 import { invoke } from '@tauri-apps/api/core'
+import { getVersion } from '@tauri-apps/api/app'
 
 const router = useRouter()
 const agentStore = useAgentStore()
@@ -159,6 +161,7 @@ const status = computed(() => agentStore.status)
 const selectedInterval = ref(5)
 const startAtLogin = ref(false)
 const showNotifications = ref(true)
+const appVersion = ref('')
 
 async function updateInterval() {
   try {
@@ -205,6 +208,7 @@ onMounted(async () => {
   selectedInterval.value = agentStore.scanInterval
 
   try {
+    appVersion.value = await getVersion()
     startAtLogin.value = await invoke<boolean>('get_start_at_login')
     showNotifications.value = await invoke<boolean>('get_notifications_enabled')
   } catch (error) {

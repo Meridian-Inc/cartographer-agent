@@ -46,20 +46,36 @@
           <p class="text-sm text-gray-400 mt-2">
             Complete the sign-in and network selection in your browser.
           </p>
+
+          <!-- Loading state while waiting for URL -->
           <p v-if="!verificationUrl" class="text-xs text-gray-500 mt-4">
-            A browser window should have opened. If not, check your default browser.
+            Requesting connection link...
           </p>
-          <div v-else class="mt-4 p-3 bg-dark-700 rounded-lg">
-            <p class="text-xs text-gray-400 mb-2">
-              If your browser didn't open automatically, click below:
+
+          <!-- URL display - always shown once available -->
+          <div v-else class="mt-4 p-4 bg-dark-700 rounded-lg text-left">
+            <p class="text-xs text-gray-400 mb-3">
+              If your browser didn't open, use this link:
             </p>
-            <button
-              @click="openVerificationUrl"
-              class="text-brand-cyan hover:text-brand-cyan/80 text-sm underline transition-colors break-all"
-            >
-              {{ verificationUrl }}
-            </button>
+            <div class="flex items-center gap-2">
+              <button
+                @click="openVerificationUrl"
+                class="flex-1 text-brand-cyan hover:text-brand-cyan/80 text-sm underline transition-colors break-all text-left"
+              >
+                {{ verificationUrl }}
+              </button>
+              <button
+                @click="copyVerificationUrl"
+                class="shrink-0 p-2 text-gray-400 hover:text-white hover:bg-dark-600 rounded-lg transition-colors"
+                title="Copy link"
+              >
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </button>
+            </div>
           </div>
+
           <button
             @click="cancelLogin"
             class="mt-4 text-gray-400 hover:text-white text-sm transition-colors"
@@ -80,18 +96,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-shell'
 
 console.log('Setup.vue: Component script executing')
-
-interface LoginUrlEvent {
-  verificationUrl: string
-  userCode: string
-}
 
 const router = useRouter()
 const agentStore = useAgentStore()
@@ -99,23 +109,9 @@ const loggingIn = ref(false)
 const errorMessage = ref('')
 const verificationUrl = ref('')
 let loginCancelled = false
-let loginUrlUnlisten: UnlistenFn | null = null
 
 onMounted(async () => {
   console.log('Setup.vue: Component mounted')
-
-  // Listen for login URL events
-  loginUrlUnlisten = await listen<LoginUrlEvent>('login-url', (event) => {
-    console.log('Setup.vue: Received login URL:', event.payload.verificationUrl)
-    verificationUrl.value = event.payload.verificationUrl
-  })
-})
-
-onUnmounted(() => {
-  if (loginUrlUnlisten) {
-    loginUrlUnlisten()
-    loginUrlUnlisten = null
-  }
 })
 
 async function openVerificationUrl() {
@@ -128,6 +124,16 @@ async function openVerificationUrl() {
   }
 }
 
+async function copyVerificationUrl() {
+  if (verificationUrl.value) {
+    try {
+      await navigator.clipboard.writeText(verificationUrl.value)
+    } catch (error) {
+      console.error('Failed to copy URL:', error)
+    }
+  }
+}
+
 async function handleLogin() {
   loggingIn.value = true
   errorMessage.value = ''
@@ -135,10 +141,29 @@ async function handleLogin() {
   loginCancelled = false
 
   try {
-    const success = await agentStore.login()
+    // Step 1: Request login URL - this returns immediately with the URL
+    console.log('Setup.vue: Requesting login URL...')
+    const loginInfo = await agentStore.requestLogin()
+    
     if (loginCancelled) {
       return
     }
+
+    // Immediately show the URL to the user
+    verificationUrl.value = loginInfo.verificationUrl
+    console.log('Setup.vue: Got verification URL:', loginInfo.verificationUrl)
+
+    // Step 2: Poll for login completion (this blocks until user completes auth)
+    const success = await agentStore.completeLogin(
+      loginInfo.deviceCode,
+      loginInfo.expiresIn,
+      loginInfo.pollInterval
+    )
+
+    if (loginCancelled) {
+      return
+    }
+
     if (success) {
       router.push('/dashboard')
     }

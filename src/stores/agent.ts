@@ -47,6 +47,14 @@ export interface HealthCheckProgress {
   healthyDevices: number
 }
 
+export interface LoginFlowResponse {
+  verificationUrl: string
+  userCode: string
+  deviceCode: string
+  expiresIn: number
+  pollInterval: number
+}
+
 export const useAgentStore = defineStore('agent', () => {
   const status = ref<AgentStatus>({
     authenticated: false
@@ -135,6 +143,38 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
+  /**
+   * Request the login URL. This returns immediately with the verification URL.
+   * Use completeLogin() afterwards to wait for the user to complete authorization.
+   */
+  async function requestLogin(): Promise<LoginFlowResponse> {
+    const result = await invoke<LoginFlowResponse>('request_login')
+    return result
+  }
+
+  /**
+   * Complete the login flow by polling for token completion.
+   * Call this after requestLogin() to wait for user authorization.
+   */
+  async function completeLogin(deviceCode: string, expiresIn: number, pollInterval: number): Promise<boolean> {
+    try {
+      const result = await invoke<AgentStatus>('complete_login', {
+        deviceCode,
+        expiresIn,
+        pollInterval
+      })
+      status.value = result
+      // Sync scanning state from backend - scan starts immediately after login
+      if (result.scanningInProgress) {
+        scanning.value = true
+      }
+      return result.authenticated
+    } catch (error) {
+      console.error('Login completion failed:', error)
+      throw error
+    }
+  }
+
   async function logout() {
     try {
       await invoke('logout')
@@ -204,6 +244,8 @@ export const useAgentStore = defineStore('agent', () => {
     isAuthenticated,
     checkAuth,
     login,
+    requestLogin,
+    completeLogin,
     logout,
     scanNow,
     refreshStatus,

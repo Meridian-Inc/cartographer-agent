@@ -4,6 +4,9 @@ import App from './App.vue'
 import router from './router'
 import './style.css'
 
+// Disable browser-style right-click context menu
+document.addEventListener('contextmenu', (e) => e.preventDefault())
+
 console.log('main.ts: Starting app initialization')
 
 try {

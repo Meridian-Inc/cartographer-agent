@@ -1,21 +1,41 @@
 use crate::auth::credentials::{save_credentials, Credentials};
 use crate::cloud::CloudClient;
 use anyhow::{Context, Result};
+use serde::Serialize;
 use std::time::Duration;
 use tokio::time::sleep;
 
-pub async fn start_login() -> Result<crate::auth::credentials::AuthStatus> {
+/// Event payload for login URL notification
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginUrlEvent {
+    pub verification_url: String,
+    pub user_code: String,
+}
+
+pub async fn start_login<F>(emit_url: Option<F>) -> Result<crate::auth::credentials::AuthStatus>
+where
+    F: Fn(LoginUrlEvent) + Send + Sync,
+{
     let client = CloudClient::new();
-    
+
     // Step 1: Request device code
     let device_code_resp = client.request_device_code().await
         .context("Failed to request device code")?;
-    
+
     // Step 2: Open browser - use the verification_uri from the response
     let url = format!("{}?code={}", device_code_resp.verification_uri, device_code_resp.user_code);
-    
+
     tracing::info!("Opening browser for authentication: {}", url);
-    
+
+    // Emit the URL to frontend so user can click if browser doesn't open
+    if let Some(emit) = &emit_url {
+        emit(LoginUrlEvent {
+            verification_url: url.clone(),
+            user_code: device_code_resp.user_code.clone(),
+        });
+    }
+
     // Open browser
     if let Err(e) = webbrowser::open(&url) {
         tracing::warn!("Failed to open browser: {}. Please visit: {}", e, url);

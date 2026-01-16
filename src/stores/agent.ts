@@ -68,11 +68,15 @@ export const useAgentStore = defineStore('agent', () => {
     // Listen for scan progress events
     progressUnlisten = await listen<ScanProgress>('scan-progress', (event) => {
       scanProgress.value = event.payload
-      // Clear progress when scan completes
+
+      // Set scanning state based on progress - this handles background scans too
       if (event.payload.stage === 'complete' || event.payload.stage === 'failed') {
+        scanning.value = false
         setTimeout(() => {
           scanProgress.value = null
         }, 3000) // Keep final message visible for 3 seconds
+      } else {
+        scanning.value = true
       }
     })
 

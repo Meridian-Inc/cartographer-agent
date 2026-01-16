@@ -46,9 +46,20 @@
           <p class="text-sm text-gray-400 mt-2">
             Complete the sign-in and network selection in your browser.
           </p>
-          <p class="text-xs text-gray-500 mt-4">
+          <p v-if="!verificationUrl" class="text-xs text-gray-500 mt-4">
             A browser window should have opened. If not, check your default browser.
           </p>
+          <div v-else class="mt-4 p-3 bg-dark-700 rounded-lg">
+            <p class="text-xs text-gray-400 mb-2">
+              If your browser didn't open automatically, click below:
+            </p>
+            <button
+              @click="openVerificationUrl"
+              class="text-brand-cyan hover:text-brand-cyan/80 text-sm underline transition-colors break-all"
+            >
+              {{ verificationUrl }}
+            </button>
+          </div>
           <button
             @click="cancelLogin"
             class="mt-4 text-gray-400 hover:text-white text-sm transition-colors"
@@ -69,25 +80,58 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { open } from '@tauri-apps/plugin-shell'
 
 console.log('Setup.vue: Component script executing')
+
+interface LoginUrlEvent {
+  verificationUrl: string
+  userCode: string
+}
 
 const router = useRouter()
 const agentStore = useAgentStore()
 const loggingIn = ref(false)
 const errorMessage = ref('')
+const verificationUrl = ref('')
 let loginCancelled = false
+let loginUrlUnlisten: UnlistenFn | null = null
 
-onMounted(() => {
+onMounted(async () => {
   console.log('Setup.vue: Component mounted')
+
+  // Listen for login URL events
+  loginUrlUnlisten = await listen<LoginUrlEvent>('login-url', (event) => {
+    console.log('Setup.vue: Received login URL:', event.payload.verificationUrl)
+    verificationUrl.value = event.payload.verificationUrl
+  })
 })
+
+onUnmounted(() => {
+  if (loginUrlUnlisten) {
+    loginUrlUnlisten()
+    loginUrlUnlisten = null
+  }
+})
+
+async function openVerificationUrl() {
+  if (verificationUrl.value) {
+    try {
+      await open(verificationUrl.value)
+    } catch (error) {
+      console.error('Failed to open URL:', error)
+    }
+  }
+}
 
 async function handleLogin() {
   loggingIn.value = true
   errorMessage.value = ''
+  verificationUrl.value = ''
   loginCancelled = false
 
   try {
@@ -118,6 +162,7 @@ function cancelLogin() {
   loginCancelled = true
   loggingIn.value = false
   errorMessage.value = ''
+  verificationUrl.value = ''
 }
 
 // Check if already authenticated on mount

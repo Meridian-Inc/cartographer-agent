@@ -1,4 +1,4 @@
-use crate::auth::{check_auth, logout as auth_logout, start_login};
+use crate::auth::{check_auth, logout as auth_logout, start_login, LoginUrlEvent};
 use crate::cloud::CloudClient;
 use crate::persistence::update_device_health;
 use crate::scanner::{
@@ -53,9 +53,20 @@ pub async fn check_auth_status() -> Result<AgentStatus, String> {
     }
 }
 
+/// Event name for login URL notification
+pub const LOGIN_URL_EVENT: &str = "login-url";
+
 #[tauri::command]
-pub async fn start_login_flow() -> Result<AgentStatus, String> {
-    match start_login().await {
+pub async fn start_login_flow(app: AppHandle) -> Result<AgentStatus, String> {
+    // Create callback to emit login URL to frontend
+    let app_clone = app.clone();
+    let emit_url = move |event: LoginUrlEvent| {
+        if let Err(e) = app_clone.emit(LOGIN_URL_EVENT, &event) {
+            tracing::warn!("Failed to emit login URL event: {}", e);
+        }
+    };
+
+    match start_login(Some(emit_url)).await {
         Ok(status) => {
             // Start background scanning if authenticated
             if status.authenticated {

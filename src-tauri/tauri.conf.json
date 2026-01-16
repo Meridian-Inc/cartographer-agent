@@ -61,8 +61,8 @@
     },
     "windows": {
       "nsis": {
-        "headerImage": "../assets/header.bmp",
-        "sidebarImage": "../assets/sidebar.bmp",
+        "headerImage": "header.bmp",
+        "sidebarImage": "sidebar.bmp",
         "installerIcon": "icons/icon.ico",
         "displayLanguageSelector": false,
         "installerHooks": "installer/nsis-hooks.nsi"

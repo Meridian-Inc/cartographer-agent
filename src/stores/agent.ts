@@ -36,6 +36,16 @@ export interface ScanProgress {
   elapsedSecs: number
 }
 
+export type HealthCheckStage = 'starting' | 'checking_devices' | 'uploading' | 'complete'
+
+export interface HealthCheckProgress {
+  stage: HealthCheckStage
+  message: string
+  totalDevices: number
+  checkedDevices: number
+  healthyDevices: number
+}
+
 export const useAgentStore = defineStore('agent', () => {
   const status = ref<AgentStatus>({
     authenticated: false
@@ -45,9 +55,11 @@ export const useAgentStore = defineStore('agent', () => {
   const scanning = ref(false)
   const scanInterval = ref(5) // minutes
   const scanProgress = ref<ScanProgress | null>(null)
-  
+  const healthCheckProgress = ref<HealthCheckProgress | null>(null)
+
   // Event listener cleanup
   let progressUnlisten: UnlistenFn | null = null
+  let healthUnlisten: UnlistenFn | null = null
 
   const isAuthenticated = computed(() => status.value.authenticated)
 
@@ -63,6 +75,17 @@ export const useAgentStore = defineStore('agent', () => {
         }, 3000) // Keep final message visible for 3 seconds
       }
     })
+
+    // Listen for health check progress events
+    healthUnlisten = await listen<HealthCheckProgress>('health-check-progress', (event) => {
+      healthCheckProgress.value = event.payload
+      // Clear progress when health check completes
+      if (event.payload.stage === 'complete') {
+        setTimeout(() => {
+          healthCheckProgress.value = null
+        }, 3000) // Keep final message visible for 3 seconds
+      }
+    })
   }
 
   // Cleanup event listeners
@@ -70,6 +93,10 @@ export const useAgentStore = defineStore('agent', () => {
     if (progressUnlisten) {
       progressUnlisten()
       progressUnlisten = null
+    }
+    if (healthUnlisten) {
+      healthUnlisten()
+      healthUnlisten = null
     }
   }
 
@@ -155,6 +182,7 @@ export const useAgentStore = defineStore('agent', () => {
     scanning,
     scanInterval,
     scanProgress,
+    healthCheckProgress,
     isAuthenticated,
     checkAuth,
     login,

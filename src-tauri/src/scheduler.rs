@@ -3,11 +3,34 @@ use crate::cloud::CloudClient;
 use crate::commands::SCAN_PROGRESS_EVENT;
 use crate::persistence;
 use crate::scanner::{check_device_reachable, get_arp_table_ips, scan_network_with_progress, Device, ScanProgress};
+use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
+
+/// Event name for health check progress updates
+pub const HEALTH_CHECK_PROGRESS_EVENT: &str = "health-check-progress";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthCheckProgress {
+    pub stage: HealthCheckStage,
+    pub message: String,
+    pub total_devices: usize,
+    pub checked_devices: usize,
+    pub healthy_devices: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HealthCheckStage {
+    Starting,
+    CheckingDevices,
+    Uploading,
+    Complete,
+}
 
 static SCAN_INTERVAL: AtomicU64 = AtomicU64::new(300); // Default 5 minutes
 static HEALTH_CHECK_INTERVAL: AtomicU64 = AtomicU64::new(60); // Default 1 minute
@@ -219,6 +242,128 @@ async fn run_health_checks_and_upload(app: &AppHandle) {
     }
 }
 
+/// Helper to run health checks with progress events
+async fn run_health_checks_with_progress(app: &AppHandle) {
+    let devices = get_known_devices().await;
+    let total = devices.len();
+
+    if total == 0 {
+        // Emit complete event even with no devices
+        let _ = app.emit(
+            HEALTH_CHECK_PROGRESS_EVENT,
+            HealthCheckProgress {
+                stage: HealthCheckStage::Complete,
+                message: "No devices to check".to_string(),
+                total_devices: 0,
+                checked_devices: 0,
+                healthy_devices: 0,
+            },
+        );
+        return;
+    }
+
+    tracing::info!("Running health checks with progress on {} devices", total);
+
+    // Emit starting event
+    let _ = app.emit(
+        HEALTH_CHECK_PROGRESS_EVENT,
+        HealthCheckProgress {
+            stage: HealthCheckStage::Starting,
+            message: format!("Checking {} devices...", total),
+            total_devices: total,
+            checked_devices: 0,
+            healthy_devices: 0,
+        },
+    );
+
+    // Get current ARP table for fallback checking
+    let arp_ips = get_arp_table_ips().await;
+
+    // Check all known devices using ping with ARP fallback
+    let mut health_results = Vec::new();
+    let mut healthy_count = 0;
+
+    for (i, device) in devices.iter().enumerate() {
+        let result = check_device_reachable(&device.ip, &arp_ips).await;
+        let reachable = result.is_ok();
+        if reachable {
+            healthy_count += 1;
+        }
+        health_results.push(DeviceHealthResult {
+            ip: device.ip.clone(),
+            reachable,
+            response_time_ms: result.ok(),
+        });
+
+        // Emit progress every device
+        let _ = app.emit(
+            HEALTH_CHECK_PROGRESS_EVENT,
+            HealthCheckProgress {
+                stage: HealthCheckStage::CheckingDevices,
+                message: format!("Checking {}...", device.ip),
+                total_devices: total,
+                checked_devices: i + 1,
+                healthy_devices: healthy_count,
+            },
+        );
+    }
+
+    // Emit uploading event
+    let _ = app.emit(
+        HEALTH_CHECK_PROGRESS_EVENT,
+        HealthCheckProgress {
+            stage: HealthCheckStage::Uploading,
+            message: "Syncing results to cloud...".to_string(),
+            total_devices: total,
+            checked_devices: total,
+            healthy_devices: healthy_count,
+        },
+    );
+
+    // Upload health results to cloud if authenticated
+    if let Ok(status) = check_auth().await {
+        if status.authenticated {
+            let client = CloudClient::new();
+            if let Err(e) = client.upload_health_check(&health_results).await {
+                tracing::debug!("Failed to upload health check: {}", e);
+            }
+        }
+    }
+
+    // Emit complete event
+    let _ = app.emit(
+        HEALTH_CHECK_PROGRESS_EVENT,
+        HealthCheckProgress {
+            stage: HealthCheckStage::Complete,
+            message: format!(
+                "Health check complete: {} healthy, {} unreachable",
+                healthy_count,
+                total - healthy_count
+            ),
+            total_devices: total,
+            checked_devices: total,
+            healthy_devices: healthy_count,
+        },
+    );
+
+    // Also emit the legacy event for compatibility
+    if let Err(e) = app.emit("health-check-complete", (healthy_count, total)) {
+        tracing::debug!("Failed to emit health-check-complete event: {}", e);
+    }
+}
+
+/// Run initial scan sequence: full scan followed by immediate health check
+async fn run_initial_scan_sequence(app: &AppHandle) {
+    tracing::info!("Running initial connection scan sequence");
+
+    // Run full network scan (emits scan-progress events)
+    run_scan_and_upload(app).await;
+
+    // Immediately run health check after scan completes
+    tracing::info!("Full scan complete, starting health check");
+    run_health_checks_with_progress(app).await;
+}
+
 pub async fn start_background_scanning(app: AppHandle) {
     // Prevent starting multiple times
     if BACKGROUND_RUNNING.swap(true, Ordering::SeqCst) {
@@ -232,8 +377,8 @@ pub async fn start_background_scanning(app: AppHandle) {
 
     // Spawn background scan task
     tokio::spawn(async move {
-        // Run initial scan immediately
-        run_scan_and_upload(&app_scan).await;
+        // Run initial scan sequence (full scan + health check)
+        run_initial_scan_sequence(&app_scan).await;
 
         // Then run on interval
         let mut last_interval = SCAN_INTERVAL.load(Ordering::Relaxed);

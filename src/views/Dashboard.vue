@@ -127,6 +127,31 @@
           </div>
         </div>
 
+        <!-- Health Check Progress -->
+        <div v-if="healthCheckProgress" class="mb-4 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-medium text-emerald-400">
+              {{ getHealthCheckStageLabel(healthCheckProgress.stage) }}
+            </span>
+            <span v-if="healthCheckProgress.totalDevices > 0" class="text-xs text-emerald-400">
+              {{ healthCheckProgress.checkedDevices }}/{{ healthCheckProgress.totalDevices }}
+            </span>
+          </div>
+          <div class="w-full bg-dark-700 rounded-full h-2 mb-2">
+            <div
+              class="bg-emerald-500 h-2 rounded-full transition-all duration-300"
+              :style="{ width: healthCheckProgress.totalDevices > 0 ? `${(healthCheckProgress.checkedDevices / healthCheckProgress.totalDevices) * 100}%` : '0%' }"
+            ></div>
+          </div>
+          <p class="text-xs text-gray-400">{{ healthCheckProgress.message }}</p>
+          <div v-if="healthCheckProgress.healthyDevices > 0 || healthCheckProgress.checkedDevices > 0" class="flex justify-between text-xs text-gray-500 mt-1">
+            <span class="text-emerald-400">{{ healthCheckProgress.healthyDevices }} healthy</span>
+            <span v-if="healthCheckProgress.checkedDevices > healthCheckProgress.healthyDevices" class="text-red-400">
+              {{ healthCheckProgress.checkedDevices - healthCheckProgress.healthyDevices }} unreachable
+            </span>
+          </div>
+        </div>
+
         <!-- Health Check Results -->
         <div v-if="healthStatus && !scanProgress" class="mb-4 p-3 bg-dark-700 rounded-lg text-sm">
           <div class="flex items-center justify-between">
@@ -174,7 +199,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useAgentStore, type ScanStage } from '@/stores/agent'
+import { useAgentStore, type ScanStage, type HealthCheckStage } from '@/stores/agent'
 import DeviceList from '@/components/DeviceList.vue'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -200,6 +225,7 @@ const status = computed(() => agentStore.status)
 const devices = computed(() => agentStore.devices)
 const scanning = computed(() => agentStore.scanning)
 const scanProgress = computed(() => agentStore.scanProgress)
+const healthCheckProgress = computed(() => agentStore.healthCheckProgress)
 
 // Determine overall network health status for the indicator dot
 type NetworkHealthStatus = 'online' | 'degraded' | 'offline'
@@ -267,6 +293,17 @@ function getScanStageLabel(stage: ScanStage): string {
     resolving_hostnames: 'Resolving Hostnames',
     complete: 'Scan Complete',
     failed: 'Scan Failed'
+  }
+  return labels[stage] || stage
+}
+
+// Get human-readable label for health check stage
+function getHealthCheckStageLabel(stage: HealthCheckStage): string {
+  const labels: Record<HealthCheckStage, string> = {
+    starting: 'Starting Health Check',
+    checking_devices: 'Checking Devices',
+    uploading: 'Syncing Results',
+    complete: 'Health Check Complete'
   }
   return labels[stage] || stage
 }

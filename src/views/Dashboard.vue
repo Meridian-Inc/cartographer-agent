@@ -332,17 +332,21 @@ const { status, devices: storeDevices, scanning, scanProgress, healthCheckProgre
 const devices = computed(() => storeDevices.value)
 
 // Start/stop elapsed time timer when scanning state changes
+function updateElapsedTime() {
+  if (scanStartTime.value) {
+    scanElapsedTime.value = (Date.now() - scanStartTime.value) / 1000
+  }
+}
+
 function startScanTimer() {
   scanStartTime.value = Date.now()
   scanElapsedTime.value = 0
   if (scanElapsedInterval) {
     clearInterval(scanElapsedInterval)
   }
-  scanElapsedInterval = setInterval(() => {
-    if (scanStartTime.value) {
-      scanElapsedTime.value = (Date.now() - scanStartTime.value) / 1000
-    }
-  }, 100) // Update every 100ms for smooth display
+  // Execute immediately so we don't wait for the first interval
+  updateElapsedTime()
+  scanElapsedInterval = setInterval(updateElapsedTime, 100) // Update every 100ms for smooth display
 }
 
 function stopScanTimer() {
@@ -354,13 +358,14 @@ function stopScanTimer() {
 }
 
 // Watch for scanning state changes to start/stop the timer
+// Use immediate: true so the timer starts even if scanning is already true on mount (first scan)
 watch(scanning, (isScanning) => {
   if (isScanning) {
     startScanTimer()
   } else {
     stopScanTimer()
   }
-})
+}, { immediate: true })
 
 // Compute device health statistics from the current devices list
 const deviceHealthStats = computed(() => {

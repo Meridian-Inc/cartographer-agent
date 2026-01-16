@@ -6,7 +6,8 @@ use crate::scanner::{
 use crate::scheduler::{
     clear_scan_cancel, ensure_background_scanning, get_known_devices, get_last_scan_time,
     is_scanning, merge_devices_preserving_health, persist_state, record_scan_time, request_scan_cancel,
-    set_scan_interval as scheduler_set_scan_interval, update_known_devices, DeviceHealthResult,
+    set_scan_interval as scheduler_set_scan_interval, trigger_immediate_scan, update_known_devices,
+    DeviceHealthResult,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -126,6 +127,8 @@ pub async fn complete_login(device_code: String, expires_in: u64, poll_interval:
             if status.authenticated {
                 tracing::info!("Login successful, starting background scanning");
                 ensure_background_scanning().await;
+                // Trigger immediate scan in background (handles reconnect after logout)
+                trigger_immediate_scan();
             }
             Ok(AgentStatus {
                 authenticated: status.authenticated,

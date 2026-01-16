@@ -90,6 +90,24 @@ pub async fn ensure_background_scanning() {
     }
 }
 
+/// Trigger an immediate full scan and health check in the background.
+/// This returns immediately and does not block the caller.
+/// Use this when reconnecting to cloud after logout.
+pub fn trigger_immediate_scan() {
+    if is_scanning() {
+        tracing::debug!("Scan already in progress, skipping immediate scan");
+        return;
+    }
+
+    if let Some(app) = get_app_handle() {
+        tracing::info!("Triggering immediate scan (reconnect to cloud)");
+        // Spawn in background so we don't block the login flow
+        tokio::spawn(async move {
+            run_initial_scan_sequence(&app).await;
+        });
+    }
+}
+
 pub fn set_scan_interval(minutes: u64) {
     SCAN_INTERVAL.store(minutes * 60, Ordering::Relaxed);
     tracing::info!("Scan interval set to {} minutes", minutes);

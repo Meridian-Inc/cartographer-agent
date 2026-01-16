@@ -33,10 +33,16 @@ pub async fn run_cli() {
     match cli.command {
         Some(Commands::Login) => {
             println!("Starting login flow...");
-            match crate::commands::start_login_flow().await {
+            // Use auth module directly since CLI doesn't have AppHandle for events
+            // Print URL to stdout instead
+            let emit_url = |event: crate::auth::LoginUrlEvent| {
+                println!("Please visit: {}", event.verification_url);
+                println!("Code: {}", event.user_code);
+            };
+            match crate::auth::start_login(Some(emit_url)).await {
                 Ok(status) => {
                     if status.authenticated {
-                        println!("✓ Successfully signed in as: {}", 
+                        println!("✓ Successfully signed in as: {}",
                             status.user_email.unwrap_or_else(|| "Unknown".to_string()));
                     } else {
                         println!("✗ Login failed");

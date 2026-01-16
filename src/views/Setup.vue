@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-dark-900 flex items-center justify-center p-4">
+  <div class="min-h-full bg-dark-900 flex items-center justify-center p-4">
     <!-- Background gradient effect -->
     <div class="absolute inset-0 bg-gradient-to-br from-brand-cyan/5 via-transparent to-brand-blue/5 pointer-events-none"></div>
 

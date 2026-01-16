@@ -2,11 +2,13 @@
 //! No special drivers or libraries required
 
 use crate::scanner::{hidden_command_sync, Device};
+use crate::scheduler::is_scan_cancelled;
 use anyhow::{Context, Result};
 use ipnetwork::IpNetwork;
 use std::time::Instant;
 
-/// Perform a ping sweep of the subnet using the system ping command
+/// Perform a ping sweep of the subnet using the system ping command.
+/// Supports cancellation via the scheduler's cancel flag.
 pub async fn ping_sweep(subnet: &str) -> Result<Vec<Device>> {
     let ip_net: IpNetwork = subnet.parse().context("Failed to parse subnet")?;
 
@@ -27,6 +29,12 @@ pub async fn ping_sweep(subnet: &str) -> Result<Vec<Device>> {
     let mut completed = 0;
 
     for (batch_idx, batch) in ips.chunks(batch_size).enumerate() {
+        // Check for cancellation before starting each batch
+        if is_scan_cancelled() {
+            tracing::info!("Ping sweep cancelled after {} hosts", completed);
+            return Err(anyhow::anyhow!("Scan cancelled by user"));
+        }
+
         let mut batch_handles = Vec::new();
 
         for ip in batch {

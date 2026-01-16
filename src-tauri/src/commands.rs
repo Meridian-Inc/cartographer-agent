@@ -2,12 +2,12 @@ use crate::auth::{check_auth, logout as auth_logout, poll_for_login, request_log
 use crate::cloud::CloudClient;
 use crate::persistence::update_device_health;
 use crate::scanner::{
-    check_device_reachable, get_arp_table_ips, scan_network_with_progress, Device, ScanProgress,
+    check_device_reachable, get_arp_table_ips, scan_network_with_progress, Device, ScanProgress, ScanStage,
 };
 use crate::scheduler::{
-    ensure_background_scanning, get_known_devices, get_last_scan_time, is_scanning,
-    persist_state, record_scan_time, set_scan_interval as scheduler_set_scan_interval,
-    update_known_devices, DeviceHealthResult,
+    clear_scan_cancel, ensure_background_scanning, get_known_devices, get_last_scan_time,
+    is_scanning, persist_state, record_scan_time, request_scan_cancel,
+    set_scan_interval as scheduler_set_scan_interval, update_known_devices, DeviceHealthResult,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -151,8 +151,33 @@ pub async fn logout() -> Result<(), String> {
 /// Event name for scan progress updates
 pub const SCAN_PROGRESS_EVENT: &str = "scan-progress";
 
+/// Cancel an in-progress network scan
+#[tauri::command]
+pub async fn cancel_scan() -> Result<(), String> {
+    request_scan_cancel();
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn scan_network(app: AppHandle) -> Result<Vec<Device>, String> {
+    // Clear any previous cancel request
+    clear_scan_cancel();
+
+    // Emit immediate "Starting" event so frontend knows scan has begun
+    let starting_progress = ScanProgress {
+        stage: ScanStage::Starting,
+        message: "Starting network scan...".to_string(),
+        percent: Some(0),
+        devices_found: None,
+        elapsed_secs: 0.0,
+    };
+    if let Err(e) = app.emit(SCAN_PROGRESS_EVENT, &starting_progress) {
+        tracing::warn!("Failed to emit starting progress event: {}", e);
+    }
+
+    // Small yield to ensure the event is processed by the frontend
+    tokio::task::yield_now().await;
+
     // Create progress callback that emits Tauri events
     let app_clone = app.clone();
     let progress_callback: Box<dyn Fn(ScanProgress) + Send + Sync> = Box::new(move |progress| {
@@ -225,6 +250,12 @@ pub async fn get_agent_status() -> Result<AgentStatus, String> {
 pub async fn set_scan_interval(minutes: u64) -> Result<(), String> {
     scheduler_set_scan_interval(minutes);
     Ok(())
+}
+
+/// Get the application version from Cargo.toml
+#[tauri::command]
+pub fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
 }
 
 #[tauri::command]

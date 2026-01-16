@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-dark-900">
+  <div class="min-h-full bg-dark-900">
     <!-- Background gradient effect -->
     <div class="absolute inset-0 bg-gradient-to-br from-brand-cyan/5 via-transparent to-brand-blue/5 pointer-events-none"></div>
 
@@ -90,14 +90,24 @@
               {{ checkingHealth ? 'Checking...' : 'Health Check' }}
             </button>
             <button
+              v-if="!scanning"
               @click="handleScan"
-              :disabled="scanning"
-              class="bg-brand-cyan hover:bg-brand-cyan/90 disabled:bg-dark-600 disabled:text-gray-500 text-dark-900 font-medium py-2 px-4 rounded-lg transition-colors flex items-center gap-2"
+              class="bg-brand-cyan hover:bg-brand-cyan/90 text-dark-900 font-medium py-2 px-4 rounded-lg transition-colors flex items-center gap-2"
             >
-              <svg class="w-4 h-4" :class="{ 'animate-spin': scanning }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              {{ scanning ? 'Scanning...' : 'Scan Now' }}
+              Scan Now
+            </button>
+            <button
+              v-else
+              @click="handleCancelScan"
+              class="bg-red-600 hover:bg-red-500 text-white font-medium py-2 px-4 rounded-lg transition-colors flex items-center gap-2"
+            >
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Cancel Scan
             </button>
           </div>
         </div>
@@ -166,19 +176,23 @@
 
         <!-- Health Check Results -->
         <div v-if="healthStatus && !scanProgress" class="mb-4 p-3 bg-dark-700 rounded-lg text-sm">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-gray-400 text-xs">Last Health Check</span>
+            <span class="text-gray-500 text-xs">{{ formatHealthCheckTime(healthStatus.timestamp) }}</span>
+          </div>
           <div class="flex items-center justify-between">
             <div class="flex gap-4">
               <span class="text-green-400 flex items-center gap-1">
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                 </svg>
-                {{ healthStatus.healthyDevices }} healthy
+                {{ healthStatus.healthyDevices }} online
               </span>
               <span v-if="healthStatus.unreachableDevices > 0" class="text-red-400 flex items-center gap-1">
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
-                {{ healthStatus.unreachableDevices }} unreachable
+                {{ healthStatus.unreachableDevices }} offline
               </span>
             </div>
             <span v-if="healthStatus.syncedToCloud" class="text-brand-cyan text-xs flex items-center gap-1">
@@ -220,6 +234,7 @@ interface HealthCheckStatus {
   healthyDevices: number
   unreachableDevices: number
   syncedToCloud: boolean
+  timestamp: string  // ISO timestamp of when the check was performed
   devices: Array<{
     ip: string
     mac: string | null
@@ -299,6 +314,7 @@ const statusLabel = computed(() => {
 // Get human-readable label for scan stage
 function getScanStageLabel(stage: ScanStage): string {
   const labels: Record<ScanStage, string> = {
+    starting: 'Starting Scan',
     detecting_network: 'Detecting Network',
     reading_arp: 'Reading Known Devices',
     ping_sweep: 'Discovering Devices',
@@ -329,6 +345,20 @@ const lastScanTime = computed(() => {
   return 'Never'
 })
 
+// Format health check timestamp to relative time (e.g., "2 min ago")
+function formatHealthCheckTime(timestamp: string): string {
+  const date = new Date(timestamp)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMs / 3600000)
+
+  if (diffMins < 1) return 'Just now'
+  if (diffMins < 60) return `${diffMins} min ago`
+  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+  return date.toLocaleString()
+}
+
 async function handleScan() {
   try {
     await agentStore.scanNow()
@@ -337,16 +367,28 @@ async function handleScan() {
     // Clear health status when scanning new devices
     healthStatus.value = null
   } catch (error) {
-    console.error('Scan error:', error)
-    alert('Failed to scan network. Please try again.')
+    // Don't show error if scan was cancelled
+    const errorMsg = error instanceof Error ? error.message : String(error)
+    if (!errorMsg.includes('cancelled')) {
+      console.error('Scan error:', error)
+      alert('Failed to scan network. Please try again.')
+    }
   }
+}
+
+async function handleCancelScan() {
+  await agentStore.cancelScan()
 }
 
 async function handleHealthCheck() {
   checkingHealth.value = true
   try {
-    const result = await invoke<HealthCheckStatus>('run_health_check')
-    healthStatus.value = result
+    const result = await invoke<Omit<HealthCheckStatus, 'timestamp'>>('run_health_check')
+    // Add timestamp to the result
+    healthStatus.value = {
+      ...result,
+      timestamp: new Date().toISOString()
+    }
     // Update devices with latest health data
     if (result.devices && result.devices.length > 0) {
       agentStore.updateDevices(result.devices)

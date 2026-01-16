@@ -41,6 +41,9 @@ static BACKGROUND_RUNNING: AtomicBool = AtomicBool::new(false);
 // Track if a network scan is currently in progress
 static SCANNING_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
+// Flag to request scan cancellation
+static SCAN_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
+
 // Cached list of known devices for health checks
 static KNOWN_DEVICES: Mutex<Vec<Device>> = Mutex::const_new(Vec::new());
 
@@ -153,6 +156,22 @@ pub fn is_background_running() -> bool {
 /// Check if a network scan is currently in progress
 pub fn is_scanning() -> bool {
     SCANNING_IN_PROGRESS.load(Ordering::Relaxed)
+}
+
+/// Request cancellation of the current scan
+pub fn request_scan_cancel() {
+    SCAN_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+    tracing::info!("Scan cancellation requested");
+}
+
+/// Check if scan cancellation has been requested
+pub fn is_scan_cancelled() -> bool {
+    SCAN_CANCEL_REQUESTED.load(Ordering::Relaxed)
+}
+
+/// Clear the cancellation flag (call when starting a new scan)
+pub fn clear_scan_cancel() {
+    SCAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
 }
 
 /// Helper to run a single scan and upload

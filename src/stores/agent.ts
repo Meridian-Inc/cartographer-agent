@@ -22,6 +22,7 @@ export interface AgentStatus {
 }
 
 export type ScanStage =
+  | 'starting'
   | 'detecting_network'
   | 'reading_arp'
   | 'ping_sweep'
@@ -202,6 +203,16 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
+  async function cancelScan() {
+    try {
+      await invoke('cancel_scan')
+      scanning.value = false
+      scanProgress.value = null
+    } catch (error) {
+      console.error('Failed to cancel scan:', error)
+    }
+  }
+
   async function refreshStatus() {
     try {
       const result = await invoke<AgentStatus>('get_agent_status')
@@ -248,6 +259,7 @@ export const useAgentStore = defineStore('agent', () => {
     completeLogin,
     logout,
     scanNow,
+    cancelScan,
     refreshStatus,
     setScanInterval,
     updateDevices,

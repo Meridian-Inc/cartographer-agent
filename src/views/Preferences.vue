@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-dark-900">
+  <div class="min-h-full bg-dark-900">
     <!-- Background gradient effect -->
     <div class="absolute inset-0 bg-gradient-to-br from-brand-cyan/5 via-transparent to-brand-blue/5 pointer-events-none"></div>
 
@@ -30,7 +30,7 @@
           <!-- Scan Interval -->
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-2">
-              Scan Interval
+              Full Scan Interval
             </label>
             <select
               v-model="selectedInterval"
@@ -152,7 +152,6 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
 import { invoke } from '@tauri-apps/api/core'
-import { getVersion } from '@tauri-apps/api/app'
 
 const router = useRouter()
 const agentStore = useAgentStore()
@@ -207,8 +206,16 @@ onMounted(async () => {
   await agentStore.refreshStatus()
   selectedInterval.value = agentStore.scanInterval
 
+  // Load version from Rust backend
   try {
-    appVersion.value = await getVersion()
+    appVersion.value = await invoke<string>('get_app_version')
+  } catch (error) {
+    console.error('Failed to get app version:', error)
+    appVersion.value = 'Unknown'
+  }
+
+  // Load other preferences
+  try {
     startAtLogin.value = await invoke<boolean>('get_start_at_login')
     showNotifications.value = await invoke<boolean>('get_notifications_enabled')
   } catch (error) {

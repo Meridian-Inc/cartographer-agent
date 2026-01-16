@@ -144,6 +144,8 @@ pub struct ScanProgress {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanStage {
+    /// Scan is starting (initial stage)
+    Starting,
     /// Detecting network configuration
     DetectingNetwork,
     /// Reading ARP table for known devices
@@ -543,9 +545,25 @@ async fn resolve_hostname_fast(ip: &str) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 async fn get_windows_network_info_full() -> Result<NetworkInfo> {
+    // Try PowerShell first (more reliable for getting complete info)
+    if let Ok(info) = get_windows_network_info_powershell().await {
+        // Validate the result - check for 0.0.0.0 which indicates failure
+        if !info.subnet.starts_with("0.0.0.0") && !info.subnet.is_empty() {
+            return Ok(info);
+        }
+        tracing::warn!("PowerShell returned invalid subnet: {}", info.subnet);
+    }
+
+    // Fallback to ipconfig parsing
+    tracing::info!("Falling back to ipconfig for network detection");
+    get_windows_network_info_ipconfig().await
+}
+
+#[cfg(target_os = "windows")]
+async fn get_windows_network_info_powershell() -> Result<NetworkInfo> {
     // Get default gateway and interface using PowerShell
     let output = hidden_command("powershell")
-        .args(["-Command", r#"
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", r#"
             $adapter = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null } | Select-Object -First 1
             if ($adapter) {
                 $ip = $adapter.IPv4Address.IPAddress
@@ -569,6 +587,11 @@ async fn get_windows_network_info_full() -> Result<NetworkInfo> {
         .context("Failed to run PowerShell command")?;
 
     let output_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+    if !stderr_str.is_empty() {
+        tracing::warn!("PowerShell stderr: {}", stderr_str);
+    }
 
     if output_str.contains('|') {
         let parts: Vec<&str> = output_str.split('|').collect();
@@ -587,7 +610,84 @@ async fn get_windows_network_info_full() -> Result<NetworkInfo> {
         }
     }
 
-    // Fallback to common defaults
+    Err(anyhow::anyhow!("PowerShell command returned no valid data"))
+}
+
+#[cfg(target_os = "windows")]
+async fn get_windows_network_info_ipconfig() -> Result<NetworkInfo> {
+    // Parse ipconfig output as fallback
+    let output = hidden_command("ipconfig")
+        .output()
+        .context("Failed to run ipconfig")?;
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    
+    let mut interface = "Ethernet".to_string();
+    let mut local_ip: Option<String> = None;
+    let mut subnet_mask: Option<String> = None;
+    let mut gateway_ip: Option<String> = None;
+    let mut current_adapter = String::new();
+    let mut found_active_adapter = false;
+
+    for line in output_str.lines() {
+        let trimmed = line.trim();
+        
+        // Detect adapter name (lines that end with ":")
+        if line.starts_with("Ethernet adapter") || line.starts_with("Wireless LAN adapter") {
+            current_adapter = line.trim_end_matches(':').to_string();
+        }
+        
+        // Look for IPv4 Address
+        if trimmed.starts_with("IPv4 Address") || trimmed.starts_with("IP Address") {
+            if let Some(ip) = trimmed.split(':').nth(1) {
+                let ip = ip.trim().trim_start_matches(". ");
+                // Skip loopback and APIPA addresses
+                if !ip.starts_with("127.") && !ip.starts_with("169.254.") {
+                    local_ip = Some(ip.to_string());
+                    interface = current_adapter.clone();
+                    found_active_adapter = true;
+                }
+            }
+        }
+        
+        // Look for Subnet Mask
+        if found_active_adapter && trimmed.starts_with("Subnet Mask") {
+            if let Some(mask) = trimmed.split(':').nth(1) {
+                subnet_mask = Some(mask.trim().trim_start_matches(". ").to_string());
+            }
+        }
+        
+        // Look for Default Gateway
+        if found_active_adapter && trimmed.starts_with("Default Gateway") {
+            if let Some(gw) = trimmed.split(':').nth(1) {
+                let gw = gw.trim().trim_start_matches(". ");
+                if !gw.is_empty() {
+                    gateway_ip = Some(gw.to_string());
+                }
+            }
+        }
+    }
+
+    // Calculate subnet from IP and mask
+    if let (Some(ip_str), Some(mask_str)) = (&local_ip, &subnet_mask) {
+        if let (Ok(ip), Ok(mask)) = (ip_str.parse::<std::net::Ipv4Addr>(), mask_str.parse::<std::net::Ipv4Addr>()) {
+            let ip_u32 = u32::from(ip);
+            let mask_u32 = u32::from(mask);
+            let network_u32 = ip_u32 & mask_u32;
+            let network = std::net::Ipv4Addr::from(network_u32);
+            let prefix = mask_u32.count_ones();
+            
+            return Ok(NetworkInfo {
+                interface,
+                subnet: format!("{}/{}", network, prefix),
+                gateway_ip,
+                local_ip,
+            });
+        }
+    }
+
+    // Last resort fallback
+    tracing::warn!("Could not detect network info, using defaults");
     Ok(NetworkInfo {
         interface: "Ethernet".to_string(),
         subnet: "192.168.1.0/24".to_string(),

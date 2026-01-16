@@ -21,7 +21,8 @@
         "minimizable": true,
         "maximizable": true,
         "closable": true,
-        "visible": true
+        "visible": true,
+        "decorations": false
       }
     ],
     "trayIcon": {
@@ -56,6 +57,15 @@
           "libappindicator3-1",
           "librsvg2-2"
         ]
+      }
+    },
+    "windows": {
+      "nsis": {
+        "headerImage": "../assets/header.png",
+        "sidebarImage": "../assets/sidebar.png",
+        "installerIcon": "icons/icon.ico",
+        "displayLanguageSelector": false,
+        "installerHooks": "installer/nsis-hooks.nsi"
       }
     }
   },

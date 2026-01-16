@@ -5,6 +5,17 @@ All notable changes to Cartographer Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0](https://github.com/Meridian-Inc/cartographer-agent/compare/v1.7.5...v1.8.0) (2026-01-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* agent v1
+
+### ✨ Features
+
+* agent v1 ([6106996](https://github.com/Meridian-Inc/cartographer-agent/commit/6106996105ca22c0e3a5956dbcd04101088cec9f))
+
 ### [1.7.5](https://github.com/Meridian-Inc/cartographer-agent/compare/v1.7.4...v1.7.5) (2026-01-16)
 
 
@@ -311,4 +322,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OAuth authentication flow
 - Configurable scan intervals
 - Desktop notifications for network events
-

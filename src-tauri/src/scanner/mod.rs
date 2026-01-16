@@ -562,14 +562,39 @@ async fn get_windows_network_info_full() -> Result<NetworkInfo> {
 #[cfg(target_os = "windows")]
 async fn get_windows_network_info_powershell() -> Result<NetworkInfo> {
     // Get default gateway and interface using PowerShell
+    // Filter out virtual adapters (WSL, Hyper-V, VirtualBox, VMware, Docker)
     let output = hidden_command("powershell")
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", r#"
-            $adapter = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null } | Select-Object -First 1
-            if ($adapter) {
-                $ip = $adapter.IPv4Address.IPAddress
-                $prefix = $adapter.IPv4Address.PrefixLength
-                $iface = $adapter.InterfaceAlias
-                $gateway = $adapter.IPv4DefaultGateway.NextHop
+            # Get all adapters with a gateway, excluding virtual/WSL adapters
+            $virtualPatterns = @('vEthernet', 'WSL', 'Hyper-V', 'VirtualBox', 'VMware', 'Docker', 'Loopback')
+            $adapters = Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null }
+            
+            # Filter out virtual adapters
+            $physicalAdapter = $null
+            foreach ($adapter in $adapters) {
+                $isVirtual = $false
+                foreach ($pattern in $virtualPatterns) {
+                    if ($adapter.InterfaceAlias -like "*$pattern*") {
+                        $isVirtual = $true
+                        break
+                    }
+                }
+                if (-not $isVirtual) {
+                    $physicalAdapter = $adapter
+                    break
+                }
+            }
+            
+            # If no physical adapter found, try any adapter as fallback
+            if ($physicalAdapter -eq $null -and $adapters.Count -gt 0) {
+                $physicalAdapter = $adapters | Select-Object -First 1
+            }
+            
+            if ($physicalAdapter) {
+                $ip = $physicalAdapter.IPv4Address.IPAddress
+                $prefix = $physicalAdapter.IPv4Address.PrefixLength
+                $iface = $physicalAdapter.InterfaceAlias
+                $gateway = $physicalAdapter.IPv4DefaultGateway.NextHop
                 # Calculate network address
                 $ipBytes = [System.Net.IPAddress]::Parse($ip).GetAddressBytes()
                 $maskInt = [uint32](0xFFFFFFFF -shl (32 - $prefix))
@@ -629,16 +654,22 @@ async fn get_windows_network_info_ipconfig() -> Result<NetworkInfo> {
     let mut current_adapter = String::new();
     let mut found_active_adapter = false;
 
+    // Virtual adapter patterns to skip
+    let virtual_patterns = ["vEthernet", "WSL", "Hyper-V", "VirtualBox", "VMware", "Docker", "Loopback"];
+    let mut is_virtual_adapter = false;
+    
     for line in output_str.lines() {
         let trimmed = line.trim();
         
         // Detect adapter name (lines that end with ":")
         if line.starts_with("Ethernet adapter") || line.starts_with("Wireless LAN adapter") {
             current_adapter = line.trim_end_matches(':').to_string();
+            // Check if this is a virtual adapter
+            is_virtual_adapter = virtual_patterns.iter().any(|p| current_adapter.contains(p));
         }
         
-        // Look for IPv4 Address
-        if trimmed.starts_with("IPv4 Address") || trimmed.starts_with("IP Address") {
+        // Look for IPv4 Address (skip virtual adapters)
+        if !is_virtual_adapter && (trimmed.starts_with("IPv4 Address") || trimmed.starts_with("IP Address")) {
             if let Some(ip) = trimmed.split(':').nth(1) {
                 let ip = ip.trim().trim_start_matches(". ");
                 // Skip loopback and APIPA addresses

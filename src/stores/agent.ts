@@ -18,6 +18,7 @@ export interface AgentStatus {
   lastScan?: string
   nextScan?: string
   deviceCount?: number
+  scanningInProgress?: boolean
 }
 
 export type ScanStage =
@@ -108,6 +109,10 @@ export const useAgentStore = defineStore('agent', () => {
     try {
       const result = await invoke<AgentStatus>('check_auth_status')
       status.value = result
+      // Sync scanning state from backend
+      if (result.scanningInProgress) {
+        scanning.value = true
+      }
       return result.authenticated
     } catch (error) {
       console.error('Failed to check auth status:', error)
@@ -119,6 +124,10 @@ export const useAgentStore = defineStore('agent', () => {
     try {
       const result = await invoke<AgentStatus>('start_login_flow')
       status.value = result
+      // Sync scanning state from backend - scan starts immediately after login
+      if (result.scanningInProgress) {
+        scanning.value = true
+      }
       return result.authenticated
     } catch (error) {
       console.error('Login failed:', error)
@@ -157,6 +166,11 @@ export const useAgentStore = defineStore('agent', () => {
     try {
       const result = await invoke<AgentStatus>('get_agent_status')
       status.value = result
+      // Sync scanning state from backend - ensures UI shows scan in progress
+      // even if we missed the initial scan-progress events
+      if (result.scanningInProgress) {
+        scanning.value = true
+      }
     } catch (error) {
       console.error('Failed to refresh status:', error)
     }

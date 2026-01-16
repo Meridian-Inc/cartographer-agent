@@ -5,7 +5,7 @@ use crate::scanner::{
     check_device_reachable, get_arp_table_ips, scan_network_with_progress, Device, ScanProgress,
 };
 use crate::scheduler::{
-    ensure_background_scanning, get_known_devices, get_last_scan_time,
+    ensure_background_scanning, get_known_devices, get_last_scan_time, is_scanning,
     persist_state, record_scan_time, set_scan_interval as scheduler_set_scan_interval,
     update_known_devices, DeviceHealthResult,
 };
@@ -24,6 +24,7 @@ pub struct AgentStatus {
     pub last_scan: Option<String>,
     pub next_scan: Option<String>,
     pub device_count: Option<usize>,
+    pub scanning_in_progress: bool,
 }
 
 static CLOUD_CLIENT: Mutex<Option<Arc<CloudClient>>> = Mutex::const_new(None);
@@ -48,6 +49,7 @@ pub async fn check_auth_status() -> Result<AgentStatus, String> {
             last_scan: get_last_scan_time(),
             next_scan: None,
             device_count: Some(devices.len()),
+            scanning_in_progress: is_scanning(),
         }),
         Err(e) => Err(e.to_string()),
     }
@@ -81,6 +83,7 @@ pub async fn start_login_flow(app: AppHandle) -> Result<AgentStatus, String> {
                 last_scan: get_last_scan_time(),
                 next_scan: None,
                 device_count: None,
+                scanning_in_progress: is_scanning(),
             })
         }
         Err(e) => Err(e.to_string()),
@@ -161,6 +164,7 @@ pub async fn get_agent_status() -> Result<AgentStatus, String> {
         last_scan: get_last_scan_time(),
         next_scan: None,
         device_count: Some(devices.len()),
+        scanning_in_progress: is_scanning(),
     })
 }
 

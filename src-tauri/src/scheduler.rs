@@ -38,6 +38,9 @@ static HEALTH_CHECK_INTERVAL: AtomicU64 = AtomicU64::new(60); // Default 1 minut
 // Track if background tasks are already running
 static BACKGROUND_RUNNING: AtomicBool = AtomicBool::new(false);
 
+// Track if a network scan is currently in progress
+static SCANNING_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
 // Cached list of known devices for health checks
 static KNOWN_DEVICES: Mutex<Vec<Device>> = Mutex::const_new(Vec::new());
 
@@ -147,9 +150,17 @@ pub fn is_background_running() -> bool {
     BACKGROUND_RUNNING.load(Ordering::Relaxed)
 }
 
+/// Check if a network scan is currently in progress
+pub fn is_scanning() -> bool {
+    SCANNING_IN_PROGRESS.load(Ordering::Relaxed)
+}
+
 /// Helper to run a single scan and upload
 async fn run_scan_and_upload(app: &AppHandle) {
     tracing::info!("Running network scan");
+
+    // Mark scan as in progress
+    SCANNING_IN_PROGRESS.store(true, Ordering::SeqCst);
 
     // Create progress callback that emits Tauri events
     let app_clone = app.clone();
@@ -198,6 +209,9 @@ async fn run_scan_and_upload(app: &AppHandle) {
             tracing::error!("Scan failed: {}", e);
         }
     }
+
+    // Mark scan as complete
+    SCANNING_IN_PROGRESS.store(false, Ordering::SeqCst);
 }
 
 /// Helper to run health checks and upload

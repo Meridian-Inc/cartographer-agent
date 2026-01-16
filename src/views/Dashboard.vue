@@ -127,6 +127,18 @@
           </div>
         </div>
 
+        <!-- Scan Starting Placeholder (shown when scan is in progress but no events received yet) -->
+        <div v-else-if="scanning" class="mb-4 p-4 bg-brand-cyan/10 border border-brand-cyan/30 rounded-lg">
+          <div class="flex items-center gap-3 mb-2">
+            <div class="w-4 h-4 border-2 border-brand-cyan border-t-transparent rounded-full animate-spin"></div>
+            <span class="text-sm font-medium text-brand-cyan">Starting Network Scan</span>
+          </div>
+          <div class="w-full bg-dark-700 rounded-full h-2 mb-2">
+            <div class="bg-brand-cyan/50 h-2 rounded-full w-1/4 animate-pulse"></div>
+          </div>
+          <p class="text-xs text-gray-400">Initializing scan, please wait...</p>
+        </div>
+
         <!-- Health Check Progress -->
         <div v-if="healthCheckProgress" class="mb-4 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
           <div class="flex items-center justify-between mb-2">

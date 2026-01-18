@@ -10,6 +10,7 @@
       </div>
     </div>
     <UpdateDialog />
+    <UpdateNotificationBar />
   </div>
 </template>
 
@@ -17,6 +18,7 @@
 import { ref, onMounted } from 'vue'
 import TitleBar from '@/components/TitleBar.vue'
 import UpdateDialog from '@/components/UpdateDialog.vue'
+import UpdateNotificationBar from '@/components/UpdateNotificationBar.vue'
 
 const ready = ref(false)
 

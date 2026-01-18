@@ -91,7 +91,6 @@ jobs:
           # Alternative env var names (Tauri CLI uses these)
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          ENABLE_UPDATER: "1"
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Cartographer Agent ${{ github.ref_name }}'

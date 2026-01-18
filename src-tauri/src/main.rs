@@ -42,15 +42,11 @@ fn main() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init());
 
-    // Enable updater only when ENABLE_UPDATER env var is set (for releases after the first one)
-    // First release: ENABLE_UPDATER is not set, updater disabled
-    // Subsequent releases: set ENABLE_UPDATER=1 in build to enable auto-updates
+    // Enable updater in release builds
     #[cfg(not(debug_assertions))]
-    if std::env::var("ENABLE_UPDATER").is_ok() {
+    {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
         info!("Updater plugin enabled");
-    } else {
-        info!("Updater plugin disabled (set ENABLE_UPDATER=1 to enable)");
     }
 
     builder.setup(|app| {
@@ -86,11 +82,17 @@ fn main() {
                 }
             });
 
-            // Start background update checker (only when updater is enabled)
+            // Check for silent update completion and notify frontend
+            // Delay slightly to ensure frontend event listeners are ready
+            let update_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                updater::check_and_emit_silent_update(&update_handle);
+            });
+
+            // Start background update checker in release builds
             #[cfg(not(debug_assertions))]
-            if std::env::var("ENABLE_UPDATER").is_ok() {
-                updater::start_update_checker(app.handle().clone());
-            }
+            updater::start_update_checker(app.handle().clone());
 
             Ok(())
         })

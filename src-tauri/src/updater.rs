@@ -1,3 +1,4 @@
+use crate::persistence;
 use semver::Version;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::UpdaterExt;
@@ -7,12 +8,21 @@ use tracing::{error, info, warn};
 /// Event name for update available notification
 pub const UPDATE_AVAILABLE_EVENT: &str = "update-available";
 
+/// Event name for silent update completed notification
+pub const SILENT_UPDATE_COMPLETED_EVENT: &str = "silent-update-completed";
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateAvailableEvent {
     pub version: String,
     pub body: Option<String>,
     pub date: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SilentUpdateCompletedEvent {
+    pub version: String,
 }
 
 /// Start the background update checker
@@ -72,7 +82,7 @@ async fn check_for_updates(app_handle: AppHandle) -> Result<(), Box<dyn std::err
             if !window_visible || !is_significant {
                 // Silent update: window is hidden OR it's just a patch version
                 info!("Performing silent update (window_visible={}, significant={})", window_visible, is_significant);
-                
+
                 // Download the update - returns bytes
                 let mut downloaded = 0;
                 let bytes = update.download(
@@ -84,7 +94,12 @@ async fn check_for_updates(app_handle: AppHandle) -> Result<(), Box<dyn std::err
                         info!("Update downloaded");
                     }
                 ).await?;
-                
+
+                // Save the silent update flag before restarting so we can notify the user
+                if let Err(e) = persistence::set_silent_update_version(new_version) {
+                    warn!("Failed to save silent update flag: {}", e);
+                }
+
                 // Install with the downloaded bytes and restart
                 info!("Installing update and restarting...");
                 update.install(bytes)?;
@@ -130,5 +145,19 @@ fn is_main_window_visible(app_handle: &AppHandle) -> bool {
         window.is_visible().unwrap_or(false)
     } else {
         false
+    }
+}
+
+/// Check if a silent update just completed and emit an event to notify the frontend.
+/// This should be called on app startup after the frontend is ready.
+pub fn check_and_emit_silent_update(app_handle: &AppHandle) {
+    if let Some(version) = persistence::take_silent_update_version() {
+        info!("Silent update to version {} completed, notifying frontend", version);
+
+        let event = SilentUpdateCompletedEvent { version };
+
+        if let Err(e) = app_handle.emit(SILENT_UPDATE_COMPLETED_EVENT, &event) {
+            error!("Failed to emit silent-update-completed event: {}", e);
+        }
     }
 }

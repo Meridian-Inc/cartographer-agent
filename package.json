@@ -1,6 +1,6 @@
 {
   "name": "cartographer-agent",
-  "version": "2.1.9",
+  "version": "2.1.10",
   "type": "module",
   "description": "Cartographer Agent - Network monitoring desktop application",
   "private": true,

@@ -1,6 +1,6 @@
 use crate::persistence;
 use semver::Version;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 use tokio::time::{interval, Duration};
 use tracing::{error, info, warn};
@@ -26,18 +26,23 @@ pub struct SilentUpdateCompletedEvent {
 }
 
 /// Start the background update checker
-/// Checks for updates every hour
+/// Checks immediately on startup, then every hour thereafter
 pub fn start_update_checker(app_handle: AppHandle) {
     let handle = app_handle.clone();
     // Use tauri's async runtime - tokio::spawn panics if called during setup
     // because Tauri's runtime isn't fully initialized yet
     tauri::async_runtime::spawn(async move {
-        // Wait 5 minutes after startup before first check
-        tokio::time::sleep(Duration::from_secs(300)).await;
+        // Brief delay to let the app fully initialize (window, tray, etc.)
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        
+        // Check immediately on startup
+        info!("Running startup update check");
+        if let Err(e) = check_for_updates(handle.clone()).await {
+            warn!("Startup update check failed: {}", e);
+        }
         
         // Then check every hour
         let mut interval = interval(Duration::from_secs(3600));
-        interval.tick().await; // Skip first tick since we already waited
         
         loop {
             interval.tick().await;
@@ -77,13 +82,12 @@ async fn check_for_updates(app_handle: AppHandle) -> Result<(), Box<dyn std::err
                 }
             };
             
-            // Check if main window is visible
-            let window_visible = is_main_window_visible(&app_handle);
-            
-            // Determine update behavior
-            if !window_visible || !is_significant {
-                // Silent update: window is hidden OR it's just a patch version
-                info!("Performing silent update (window_visible={}, significant={})", window_visible, is_significant);
+            // Determine update behavior based on version change type:
+            // - Patch updates (x.y.Z): silent background update
+            // - Minor/Major updates (x.Y.z or X.y.z): prompt user
+            if !is_significant {
+                // Silent update for patch versions
+                info!("Patch update detected ({}), performing silent background update", new_version);
 
                 // Download the update - returns bytes
                 let mut downloaded = 0;
@@ -106,8 +110,8 @@ async fn check_for_updates(app_handle: AppHandle) -> Result<(), Box<dyn std::err
                 info!("Installing update and restarting...");
                 update.install(bytes)?;
             } else {
-                // Significant update with window visible - prompt user
-                info!("Significant update available, prompting user");
+                // Minor/Major update - always prompt user regardless of window state
+                info!("Significant update detected ({}), prompting user", new_version);
                 
                 let event = UpdateAvailableEvent {
                     version: new_version.to_string(),
@@ -133,21 +137,13 @@ async fn check_for_updates(app_handle: AppHandle) -> Result<(), Box<dyn std::err
 }
 
 /// Check if the update is significant (minor or major version change)
+/// Returns true for minor/major bumps, false for patch-only updates
 fn is_significant_update(current: &str, new: &str) -> Result<bool, semver::Error> {
     let current_ver = Version::parse(current)?;
     let new_ver = Version::parse(new)?;
     
     // Significant if major or minor version changed
     Ok(current_ver.major != new_ver.major || current_ver.minor != new_ver.minor)
-}
-
-/// Check if the main window is currently visible
-fn is_main_window_visible(app_handle: &AppHandle) -> bool {
-    if let Some(window) = app_handle.get_webview_window("main") {
-        window.is_visible().unwrap_or(false)
-    } else {
-        false
-    }
 }
 
 /// Check if a silent update just completed and emit an event to notify the frontend.

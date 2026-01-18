@@ -26,20 +26,6 @@
         </svg>
       </button>
 
-      <!-- Maximize/Restore -->
-      <button
-        @click="toggleMaximize"
-        class="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-white hover:bg-dark-600 rounded transition-colors"
-        :title="isMaximized ? 'Restore' : 'Maximize'"
-      >
-        <svg v-if="!isMaximized" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4h16v16h-4M4 8h12v12H4V8z" />
-        </svg>
-        <svg v-else class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 4h12v12M4 8h12v12H4z" />
-        </svg>
-      </button>
-
       <!-- Close -->
       <button
         @click="close"
@@ -55,11 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-
-const isMaximized = ref(false)
-let unlisten: (() => void) | null = null
 
 async function startDrag(event: MouseEvent) {
   // Only drag on left mouse button and not on buttons
@@ -75,38 +57,9 @@ async function minimize() {
   await appWindow.minimize()
 }
 
-async function toggleMaximize() {
-  const appWindow = getCurrentWindow()
-  if (isMaximized.value) {
-    await appWindow.unmaximize()
-  } else {
-    await appWindow.maximize()
-  }
-}
-
 async function close() {
   const appWindow = getCurrentWindow()
-  await appWindow.hide()
+  // Triggers CloseRequested event, which Rust intercepts to hide window + Dock icon
+  await appWindow.close()
 }
-
-async function updateMaximizedState() {
-  const appWindow = getCurrentWindow()
-  isMaximized.value = await appWindow.isMaximized()
-}
-
-onMounted(async () => {
-  await updateMaximizedState()
-  
-  // Listen for window resize events to update maximize state
-  const appWindow = getCurrentWindow()
-  unlisten = await appWindow.onResized(async () => {
-    await updateMaximizedState()
-  })
-})
-
-onUnmounted(() => {
-  if (unlisten) {
-    unlisten()
-  }
-})
 </script>

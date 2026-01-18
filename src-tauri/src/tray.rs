@@ -8,6 +8,9 @@ use tauri::{
     AppHandle, Manager,
 };
 
+#[cfg(target_os = "macos")]
+use tauri::ActivationPolicy;
+
 /// Create the system tray icon and menu
 pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     // Create menu items
@@ -62,6 +65,10 @@ pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Show and focus the main window
 pub fn show_main_window(app: &AppHandle) {
+    // On macOS, show in Dock when window is visible
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(ActivationPolicy::Regular);
+
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
@@ -74,4 +81,8 @@ pub fn hide_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
     }
+
+    // On macOS, hide from Dock when window is hidden (menu bar app behavior)
+    #[cfg(target_os = "macos")]
+    let _ = app.set_activation_policy(ActivationPolicy::Accessory);
 }

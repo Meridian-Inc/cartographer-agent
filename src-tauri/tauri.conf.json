@@ -16,19 +16,15 @@
         "label": "main",
         "width": 800,
         "height": 700,
-        "resizable": true,
+        "resizable": false,
         "fullscreen": false,
         "minimizable": true,
-        "maximizable": true,
+        "maximizable": false,
         "closable": true,
         "visible": true,
         "decorations": false
       }
     ],
-    "trayIcon": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true
-    },
     "security": {
       "csp": null
     }

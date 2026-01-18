@@ -51,13 +51,13 @@ fn main() {
 
             // Set up close handler to minimize to tray instead of quitting
             let main_window = app.get_webview_window("main").unwrap();
-            let window_clone = main_window.clone();
+            let app_handle = app.handle().clone();
             main_window.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     // Prevent the window from closing
                     api.prevent_close();
-                    // Hide instead
-                    let _ = window_clone.hide();
+                    // Hide to tray (also hides from Dock on macOS)
+                    tray::hide_main_window(&app_handle);
                     tracing::info!("Window hidden to tray");
                 }
             });

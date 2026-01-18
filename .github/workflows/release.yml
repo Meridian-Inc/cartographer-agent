@@ -81,12 +81,12 @@ jobs:
         run: npx tauri icon src-tauri/icons/icon.png
 
       - name: Build Tauri app
+        id: tauri-build
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Uncomment the line below AFTER the first release to enable auto-updates
           ENABLE_UPDATER: "1"
         with:
           tagName: ${{ github.ref_name }}
@@ -95,6 +95,21 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
           includeUpdaterJson: true
+
+      - name: Upload signature files
+        if: always()
+        run: |
+          echo "Looking for signature files..."
+          find src-tauri/target -name "*.sig" -type f 2>/dev/null || true
+          
+          # Upload any .sig files found to the release
+          for sig in $(find src-tauri/target -name "*.sig" -type f 2>/dev/null); do
+            echo "Uploading $sig"
+            gh release upload "${{ github.ref_name }}" "$sig" --clobber || true
+          done
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Note: Tauri action automatically generates and signs update manifests
       # The latest.json will be available at the endpoint configured in tauri.conf.json

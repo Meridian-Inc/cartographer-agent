@@ -67,6 +67,10 @@
         "displayLanguageSelector": false,
         "installerHooks": "installer/nsis-hooks.nsi"
       }
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "entitlements": null
     }
   },
   "plugins": {

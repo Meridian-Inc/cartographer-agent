@@ -28,3 +28,4 @@ src-tauri/target
 src-tauri/Cargo.lock
 
 icon.ico
+src-tauri/icons/*

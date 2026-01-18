@@ -59,17 +59,20 @@ fn main() {
             }
 
             // Set up close handler to minimize to tray instead of quitting
-            let main_window = app.get_webview_window("main").unwrap();
-            let app_handle = app.handle().clone();
-            main_window.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    // Prevent the window from closing
-                    api.prevent_close();
-                    // Hide to tray (also hides from Dock on macOS)
-                    tray::hide_main_window(&app_handle);
-                    tracing::info!("Window hidden to tray");
-                }
-            });
+            if let Some(main_window) = app.get_webview_window("main") {
+                let app_handle = app.handle().clone();
+                main_window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        // Prevent the window from closing
+                        api.prevent_close();
+                        // Hide to tray (also hides from Dock on macOS)
+                        tray::hide_main_window(&app_handle);
+                        tracing::info!("Window hidden to tray");
+                    }
+                });
+            } else {
+                tracing::warn!("Main window not found during setup");
+            }
 
             // Check if user is authenticated on startup
             let handle = app.handle().clone();

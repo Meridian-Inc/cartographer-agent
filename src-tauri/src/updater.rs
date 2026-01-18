@@ -29,7 +29,9 @@ pub struct SilentUpdateCompletedEvent {
 /// Checks for updates every hour
 pub fn start_update_checker(app_handle: AppHandle) {
     let handle = app_handle.clone();
-    tokio::spawn(async move {
+    // Use tauri's async runtime - tokio::spawn panics if called during setup
+    // because Tauri's runtime isn't fully initialized yet
+    tauri::async_runtime::spawn(async move {
         // Wait 5 minutes after startup before first check
         tokio::time::sleep(Duration::from_secs(300)).await;
         

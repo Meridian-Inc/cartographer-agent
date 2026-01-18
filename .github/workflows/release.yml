@@ -102,31 +102,53 @@ jobs:
 
       - name: Manually sign update bundles
         run: |
-          echo "=== Manually signing update bundles ==="
+          echo "=== Manually signing ALL bundles ==="
           SIGNED_COUNT=0
           
-          # Find and sign macOS .tar.gz bundles (handle spaces in filenames)
+          # macOS: .app.tar.gz (updater bundle)
           while IFS= read -r -d '' bundle; do
-            echo "Signing macOS bundle: $bundle"
+            echo "Signing: $bundle"
             npx @tauri-apps/cli signer sign -k "$TAURI_PRIVATE_KEY" -p "$TAURI_PRIVATE_KEY_PASSWORD" "$bundle"
             SIGNED_COUNT=$((SIGNED_COUNT + 1))
           done < <(find src-tauri/target -name "*.app.tar.gz" -type f -print0 2>/dev/null)
           
-          # Find and sign AppImage bundles
+          # macOS: .dmg
           while IFS= read -r -d '' bundle; do
-            echo "Signing AppImage bundle: $bundle"
+            echo "Signing: $bundle"
+            npx @tauri-apps/cli signer sign -k "$TAURI_PRIVATE_KEY" -p "$TAURI_PRIVATE_KEY_PASSWORD" "$bundle"
+            SIGNED_COUNT=$((SIGNED_COUNT + 1))
+          done < <(find src-tauri/target -name "*.dmg" -type f -print0 2>/dev/null)
+          
+          # Linux: .AppImage (updater bundle)
+          while IFS= read -r -d '' bundle; do
+            echo "Signing: $bundle"
             npx @tauri-apps/cli signer sign -k "$TAURI_PRIVATE_KEY" -p "$TAURI_PRIVATE_KEY_PASSWORD" "$bundle"
             SIGNED_COUNT=$((SIGNED_COUNT + 1))
           done < <(find src-tauri/target -name "*.AppImage" -type f -print0 2>/dev/null)
           
-          # Find and sign Windows exe bundles
+          # Linux: .deb
           while IFS= read -r -d '' bundle; do
-            echo "Signing Windows bundle: $bundle"
+            echo "Signing: $bundle"
+            npx @tauri-apps/cli signer sign -k "$TAURI_PRIVATE_KEY" -p "$TAURI_PRIVATE_KEY_PASSWORD" "$bundle"
+            SIGNED_COUNT=$((SIGNED_COUNT + 1))
+          done < <(find src-tauri/target -name "*.deb" -type f -print0 2>/dev/null)
+          
+          # Windows: .exe (NSIS updater bundle)
+          while IFS= read -r -d '' bundle; do
+            echo "Signing: $bundle"
             npx @tauri-apps/cli signer sign -k "$TAURI_PRIVATE_KEY" -p "$TAURI_PRIVATE_KEY_PASSWORD" "$bundle"
             SIGNED_COUNT=$((SIGNED_COUNT + 1))
           done < <(find src-tauri/target -name "*-setup.exe" -type f -print0 2>/dev/null)
           
+          # Windows: .msi
+          while IFS= read -r -d '' bundle; do
+            echo "Signing: $bundle"
+            npx @tauri-apps/cli signer sign -k "$TAURI_PRIVATE_KEY" -p "$TAURI_PRIVATE_KEY_PASSWORD" "$bundle"
+            SIGNED_COUNT=$((SIGNED_COUNT + 1))
+          done < <(find src-tauri/target -name "*.msi" -type f -print0 2>/dev/null)
+          
           echo ""
+          echo "=== Signed $SIGNED_COUNT bundles ==="
           echo "=== Looking for generated .sig files ==="
           find src-tauri/target -name "*.sig" -type f 2>/dev/null
           

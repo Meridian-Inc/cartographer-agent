@@ -74,7 +74,7 @@
       "open": true
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI1NkFFRUZENkNCQ0ExNDAKUldSQW9ieHMvZTVxSlN3Q3NBRVZMcDM1ZkZ3QlMvSGQ4TGpIRUJzNXF1MmdlTnVHVkJmZXpmeVcK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU4MDMwMjRGODE4MkQ2MzQKUldRMDFvS0JUd0lEV0tyaDhUaStsOHpsWTE5UnlTc2pra0RONTNuUHJsaW1sMDROUWMrVGd0WU0K",
       "endpoints": [
         "https://github.com/Meridian-Inc/cartographer-agent/releases/latest/download/latest.json"
       ],

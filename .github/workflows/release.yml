@@ -229,19 +229,13 @@ jobs:
           echo "Generated latest.json:"
           cat latest.json
 
-      - name: Upload latest.json to release
+      - name: Finalize release with changelog and latest.json
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.VERSION }}
-          files: latest.json
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update release with changelog
-        uses: softprops/action-gh-release@v2
-        with:
           name: Cartographer Agent v${{ steps.version.outputs.VERSION }}
           body_path: release_notes.md
+          files: latest.json
           draft: false
           prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
         env:

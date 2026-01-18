@@ -72,6 +72,15 @@
   "plugins": {
     "shell": {
       "open": true
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI1NkFFRUZENkNCQ0ExNDAKUldSQW9ieHMvZTVxSlN3Q3NBRVZMcDM1ZkZ3QlMvSGQ4TGpIRUJzNXF1MmdlTnVHVkJmZXpmeVcK",
+      "endpoints": [
+        "https://github.com/Meridian-Inc/cartographer-agent/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

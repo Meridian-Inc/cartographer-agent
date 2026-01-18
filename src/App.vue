@@ -9,12 +9,14 @@
         </div>
       </div>
     </div>
+    <UpdateDialog />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import TitleBar from '@/components/TitleBar.vue'
+import UpdateDialog from '@/components/UpdateDialog.vue'
 
 const ready = ref(false)
 

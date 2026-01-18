@@ -10,6 +10,7 @@ mod platform;
 mod scanner;
 mod scheduler;
 mod tray;
+mod updater;
 
 use tauri::Manager;
 use tracing::info;
@@ -38,9 +39,17 @@ fn main() {
 
     info!("Starting Cartographer Agent");
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
-        .setup(|app| {
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init());
+
+    // Only enable updater in release builds - prevents crashes during development
+    // when update endpoint doesn't exist yet
+    #[cfg(not(debug_assertions))]
+    {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+
+    builder.setup(|app| {
             // Initialize scheduler (loads persisted state)
             scheduler::init(app.handle().clone());
 
@@ -72,6 +81,10 @@ fn main() {
                     }
                 }
             });
+
+            // Start background update checker (only in release builds)
+            #[cfg(not(debug_assertions))]
+            updater::start_update_checker(app.handle().clone());
 
             Ok(())
         })

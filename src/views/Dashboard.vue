@@ -285,6 +285,16 @@
         </div>
       </div>
     </div>
+
+    <!-- Disconnect Confirmation Dialog -->
+    <ConfirmDialog
+      v-model="showDisconnectDialog"
+      title="Disconnect"
+      message="Are you sure you want to disconnect from the cloud? You can reconnect at any time."
+      confirm-text="Disconnect"
+      :destructive="true"
+      @confirm="performDisconnect"
+    />
   </div>
 </template>
 
@@ -294,6 +304,7 @@ import { storeToRefs } from 'pinia'
 import { useAgentStore, type ScanStage, type HealthCheckStage, type HealthCheckProgress } from '@/stores/agent'
 import DeviceList from '@/components/DeviceList.vue'
 import DeviceHealthPieChart from '@/components/DeviceHealthPieChart.vue'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
@@ -325,6 +336,7 @@ const networkInfo = ref<string>('')
 const checkingHealth = ref(false)
 const healthStatus = ref<HealthCheckStatus | null>(null)
 const showDeviceList = ref(false)
+const showDisconnectDialog = ref(false)
 const lastOperationResult = ref<LastOperationResult | null>(null)
 
 // Running elapsed time for scans
@@ -583,17 +595,17 @@ async function openCloud() {
   }
 }
 
-async function handleDisconnect() {
-  if (!confirm('Are you sure you want to disconnect from the cloud? You can reconnect at any time.')) {
-    return
-  }
+function handleDisconnect() {
+  showDisconnectDialog.value = true
+}
+
+async function performDisconnect() {
   try {
     await agentStore.logout()
     // Navigate back to setup page
     window.location.href = '/'
   } catch (error) {
     console.error('Failed to disconnect:', error)
-    alert('Failed to disconnect. Please try again.')
   }
 }
 

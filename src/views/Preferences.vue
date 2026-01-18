@@ -144,6 +144,16 @@
         </div>
       </div>
     </div>
+
+    <!-- Sign Out Confirmation Dialog -->
+    <ConfirmDialog
+      v-model="showLogoutDialog"
+      title="Sign Out"
+      message="Are you sure you want to sign out?"
+      confirm-text="Sign Out"
+      :destructive="true"
+      @confirm="performLogout"
+    />
   </div>
 </template>
 
@@ -152,6 +162,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
 import { invoke } from '@tauri-apps/api/core'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
 const router = useRouter()
 const agentStore = useAgentStore()
@@ -160,6 +171,7 @@ const status = computed(() => agentStore.status)
 const selectedInterval = ref(5)
 const startAtLogin = ref(false)
 const showNotifications = ref(true)
+const showLogoutDialog = ref(false)
 const appVersion = ref('')
 
 async function updateInterval() {
@@ -190,15 +202,16 @@ async function toggleNotifications() {
   }
 }
 
-async function handleLogout() {
-  if (confirm('Are you sure you want to sign out?')) {
-    try {
-      await agentStore.logout()
-      router.push('/')
-    } catch (error) {
-      console.error('Logout error:', error)
-      alert('Failed to sign out. Please try again.')
-    }
+function handleLogout() {
+  showLogoutDialog.value = true
+}
+
+async function performLogout() {
+  try {
+    await agentStore.logout()
+    router.push('/')
+  } catch (error) {
+    console.error('Logout error:', error)
   }
 }
 

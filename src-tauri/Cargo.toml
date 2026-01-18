@@ -1,6 +1,6 @@
 [package]
 name = "cartographer-agent"
-version = "2.3.1"
+version = "2.3.2"
 description = "Cartographer Agent - Network monitoring desktop application"
 authors = ["Cartographer Team"]
 license = ""

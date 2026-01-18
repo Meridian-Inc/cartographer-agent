@@ -5,6 +5,13 @@ All notable changes to Cartographer Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+### [2.1.13](https://github.com/Meridian-Inc/cartographer-agent/compare/v2.1.12...v2.1.13) (2026-01-18)
+
+
+### 🐛 Bug Fixes
+
+* rename macOS signature files to match tauri naming ([42641f5](https://github.com/Meridian-Inc/cartographer-agent/commit/42641f5dbe0e1fa4ca6bf8987fb3cf81ce92afe4))
+
 ### [2.1.12](https://github.com/Meridian-Inc/cartographer-agent/compare/v2.1.11...v2.1.12) (2026-01-18)
 
 

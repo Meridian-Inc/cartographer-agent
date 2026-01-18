@@ -105,26 +105,26 @@ jobs:
           echo "=== Manually signing update bundles ==="
           SIGNED_COUNT=0
           
-          # Find and sign macOS bundles
-          for bundle in $(find src-tauri/target -name "*.app.tar.gz" -type f 2>/dev/null); do
-            echo "Signing $bundle"
+          # Find and sign macOS .tar.gz bundles (handle spaces in filenames)
+          while IFS= read -r -d '' bundle; do
+            echo "Signing macOS bundle: $bundle"
             npx @tauri-apps/cli signer sign -k "$TAURI_PRIVATE_KEY" -p "$TAURI_PRIVATE_KEY_PASSWORD" "$bundle"
             SIGNED_COUNT=$((SIGNED_COUNT + 1))
-          done
+          done < <(find src-tauri/target -name "*.app.tar.gz" -type f -print0 2>/dev/null)
           
           # Find and sign AppImage bundles
-          for bundle in $(find src-tauri/target -name "*.AppImage" -type f 2>/dev/null); do
-            echo "Signing $bundle"
+          while IFS= read -r -d '' bundle; do
+            echo "Signing AppImage bundle: $bundle"
             npx @tauri-apps/cli signer sign -k "$TAURI_PRIVATE_KEY" -p "$TAURI_PRIVATE_KEY_PASSWORD" "$bundle"
             SIGNED_COUNT=$((SIGNED_COUNT + 1))
-          done
+          done < <(find src-tauri/target -name "*.AppImage" -type f -print0 2>/dev/null)
           
           # Find and sign Windows exe bundles
-          for bundle in $(find src-tauri/target -name "*-setup.exe" -type f 2>/dev/null); do
-            echo "Signing $bundle"
+          while IFS= read -r -d '' bundle; do
+            echo "Signing Windows bundle: $bundle"
             npx @tauri-apps/cli signer sign -k "$TAURI_PRIVATE_KEY" -p "$TAURI_PRIVATE_KEY_PASSWORD" "$bundle"
             SIGNED_COUNT=$((SIGNED_COUNT + 1))
-          done
+          done < <(find src-tauri/target -name "*-setup.exe" -type f -print0 2>/dev/null)
           
           echo ""
           echo "=== Looking for generated .sig files ==="
@@ -138,11 +138,11 @@ jobs:
             exit 1
           fi
           
-          # Upload .sig files to the release
-          for sig in $(find src-tauri/target -name "*.sig" -type f 2>/dev/null); do
+          # Upload .sig files to the release (handle spaces)
+          while IFS= read -r -d '' sig; do
             echo "Uploading $sig"
             gh release upload "${{ github.ref_name }}" "$sig" --clobber
-          done
+          done < <(find src-tauri/target -name "*.sig" -type f -print0 2>/dev/null)
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

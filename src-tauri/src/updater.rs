@@ -106,9 +106,13 @@ async fn check_for_updates(app_handle: AppHandle) -> Result<(), Box<dyn std::err
                     warn!("Failed to save silent update flag: {}", e);
                 }
 
-                // Install with the downloaded bytes and restart
-                info!("Installing update and restarting...");
+                // Install the update
+                info!("Installing update...");
                 update.install(bytes)?;
+                
+                // Explicitly restart the app to apply the update
+                info!("Restarting app to apply update...");
+                app_handle.restart();
             } else {
                 // Minor/Major update - always prompt user regardless of window state
                 info!("Significant update detected ({}), prompting user", new_version);

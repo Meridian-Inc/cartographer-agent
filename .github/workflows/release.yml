@@ -100,31 +100,54 @@ jobs:
           args: ${{ matrix.args }}
           includeUpdaterJson: true
 
-      - name: Debug and upload signature files
-        if: always()
+      - name: Manually sign update bundles
         run: |
-          echo "=== Looking for ALL bundle files ==="
-          find src-tauri/target -type f \( -name "*.sig" -o -name "*.tar.gz" -o -name "*.json" \) 2>/dev/null || true
+          echo "=== Manually signing update bundles ==="
+          SIGNED_COUNT=0
+          
+          # Find and sign macOS bundles
+          for bundle in $(find src-tauri/target -name "*.app.tar.gz" -type f 2>/dev/null); do
+            echo "Signing $bundle"
+            npx @tauri-apps/cli signer sign -k "$TAURI_PRIVATE_KEY" -p "$TAURI_PRIVATE_KEY_PASSWORD" "$bundle"
+            SIGNED_COUNT=$((SIGNED_COUNT + 1))
+          done
+          
+          # Find and sign AppImage bundles
+          for bundle in $(find src-tauri/target -name "*.AppImage" -type f 2>/dev/null); do
+            echo "Signing $bundle"
+            npx @tauri-apps/cli signer sign -k "$TAURI_PRIVATE_KEY" -p "$TAURI_PRIVATE_KEY_PASSWORD" "$bundle"
+            SIGNED_COUNT=$((SIGNED_COUNT + 1))
+          done
+          
+          # Find and sign Windows exe bundles
+          for bundle in $(find src-tauri/target -name "*-setup.exe" -type f 2>/dev/null); do
+            echo "Signing $bundle"
+            npx @tauri-apps/cli signer sign -k "$TAURI_PRIVATE_KEY" -p "$TAURI_PRIVATE_KEY_PASSWORD" "$bundle"
+            SIGNED_COUNT=$((SIGNED_COUNT + 1))
+          done
           
           echo ""
-          echo "=== Checking bundle directory structure ==="
-          ls -laR src-tauri/target/release/bundle/ 2>/dev/null | head -100 || true
+          echo "=== Looking for generated .sig files ==="
+          find src-tauri/target -name "*.sig" -type f 2>/dev/null
           
-          echo ""
-          echo "=== Environment variables (redacted) ==="
-          echo "TAURI_SIGNING_PRIVATE_KEY set: $([[ -n "$TAURI_SIGNING_PRIVATE_KEY" ]] && echo 'YES' || echo 'NO')"
-          echo "TAURI_PRIVATE_KEY set: $([[ -n "$TAURI_PRIVATE_KEY" ]] && echo 'YES' || echo 'NO')"
+          SIG_COUNT=$(find src-tauri/target -name "*.sig" -type f 2>/dev/null | wc -l)
+          echo "Found $SIG_COUNT signature files"
           
-          # Upload any .sig files found to the release
+          if [ "$SIG_COUNT" -eq 0 ]; then
+            echo "ERROR: No .sig files were generated! Signing failed."
+            exit 1
+          fi
+          
+          # Upload .sig files to the release
           for sig in $(find src-tauri/target -name "*.sig" -type f 2>/dev/null); do
             echo "Uploading $sig"
-            gh release upload "${{ github.ref_name }}" "$sig" --clobber || true
+            gh release upload "${{ github.ref_name }}" "$sig" --clobber
           done
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       # Note: Tauri action automatically generates and signs update manifests
       # The latest.json will be available at the endpoint configured in tauri.conf.json

@@ -222,17 +222,17 @@ jobs:
         run: |
           echo "=== Re-uploading signed Windows artifacts ==="
           
-          # Find and upload signed .exe files
-          for exe in $(find src-tauri/target/release/bundle -name "*.exe" -type f); do
+          # Find and upload signed .exe files (handle spaces in filenames)
+          while IFS= read -r -d '' exe; do
             echo "Uploading signed: $exe"
             gh release upload "${{ github.ref_name }}" "$exe" --clobber
-          done
+          done < <(find src-tauri/target/release/bundle -name "*.exe" -type f -print0 2>/dev/null)
           
-          # Find and upload signed .msi files
-          for msi in $(find src-tauri/target/release/bundle -name "*.msi" -type f); do
+          # Find and upload signed .msi files (handle spaces in filenames)
+          while IFS= read -r -d '' msi; do
             echo "Uploading signed: $msi"
             gh release upload "${{ github.ref_name }}" "$msi" --clobber
-          done
+          done < <(find src-tauri/target/release/bundle -name "*.msi" -type f -print0 2>/dev/null)
           
           echo "=== Signed artifacts uploaded ==="
         shell: bash

@@ -5,6 +5,13 @@ All notable changes to Cartographer Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+### [2.4.2](https://github.com/Meridian-Inc/cartographer-agent/compare/v2.4.1...v2.4.2) (2026-01-19)
+
+
+### 🐛 Bug Fixes
+
+* router inference on general vendors ([d2fa77d](https://github.com/Meridian-Inc/cartographer-agent/commit/d2fa77d595911aa4acb8c5289f99cdb6bfccd243))
+
 ### [2.4.1](https://github.com/Meridian-Inc/cartographer-agent/compare/v2.4.0...v2.4.1) (2026-01-19)
 
 

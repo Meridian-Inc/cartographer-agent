@@ -78,7 +78,7 @@ fn normalize_mac(mac: &str) -> Option<String> {
 ///
 /// Categories (in order of priority):
 /// - firewall: Security appliances (Firewalla, pfSense, OPNsense, Sophos, etc.)
-/// - router: Network routers and switches (Cisco, Ubiquiti, MikroTik, etc.)
+/// - network_device: Network equipment (Cisco, Ubiquiti, TP-Link, etc.) - could be router, switch, or AP
 /// - service: Virtualization and container hosts (Proxmox, VMware, Docker, etc.)
 /// - server: Server hardware manufacturers (Supermicro, Dell EMC, HPE, etc.)
 /// - nas: Network attached storage (Synology, QNAP, etc.)
@@ -88,9 +88,13 @@ fn normalize_mac(mac: &str) -> Option<String> {
 /// - gaming: Gaming consoles
 /// - mobile: Mobile phones and tablets
 /// - computer: Desktop/laptop computers
+///
+/// Note: Actual router detection is done by checking if the device is the network gateway.
+/// The "network_device" type is used for networking vendors since they make switches, APs, and
+/// other devices - not just routers.
 pub fn infer_device_type(vendor: &str) -> Option<&'static str> {
     let vendor_lower = vendor.to_lowercase();
-    
+
     // Firewall / Security appliances (check first as they're specific)
     if vendor_lower.contains("firewalla")
         || vendor_lower.contains("pfsense")
@@ -105,7 +109,7 @@ pub fn infer_device_type(vendor: &str) -> Option<&'static str> {
     {
         return Some("firewall");
     }
-    
+
     // Virtualization / Container hosts / Services
     // These often show up with VM-specific OUIs
     if vendor_lower.contains("proxmox")
@@ -119,8 +123,10 @@ pub fn infer_device_type(vendor: &str) -> Option<&'static str> {
     {
         return Some("service");
     }
-    
-    // Network equipment manufacturers (routers, switches, APs)
+
+    // Network equipment manufacturers (could be routers, switches, or APs)
+    // We classify as "network_device" since these vendors make many product types.
+    // Actual router detection happens via gateway detection, not vendor name.
     if vendor_lower.contains("cisco")
         || vendor_lower.contains("juniper")
         || vendor_lower.contains("arista")
@@ -140,7 +146,7 @@ pub fn infer_device_type(vendor: &str) -> Option<&'static str> {
         || vendor_lower.contains("cambium")
         || vendor_lower.contains("routerboard")
     {
-        return Some("router");
+        return Some("network_device");
     }
     
     // Server hardware manufacturers
@@ -317,22 +323,32 @@ mod tests {
     
     #[test]
     fn test_infer_device_type() {
-        assert_eq!(infer_device_type("Cisco Systems, Inc."), Some("router"));
+        // Network equipment vendors are classified as "network_device" (not "router")
+        // since they make switches, APs, and other devices - not just routers.
+        // Actual router detection is done via gateway detection.
+        assert_eq!(infer_device_type("Cisco Systems, Inc."), Some("network_device"));
+        assert_eq!(infer_device_type("TP-Link Technologies"), Some("network_device"));
+        assert_eq!(infer_device_type("Routerboard.com"), Some("network_device"));
+        assert_eq!(infer_device_type("Ubiquiti Inc"), Some("network_device"));
+        assert_eq!(infer_device_type("NETGEAR"), Some("network_device"));
+
+        // Other device types
         assert_eq!(infer_device_type("Apple, Inc."), Some("apple"));
         assert_eq!(infer_device_type("Synology Incorporated"), Some("nas"));
         assert_eq!(infer_device_type("Sonos, Inc."), Some("iot"));
         assert_eq!(infer_device_type("Canon Inc."), Some("printer"));
         assert_eq!(infer_device_type("Nintendo Co., Ltd."), Some("gaming"));
         assert_eq!(infer_device_type("Unknown Vendor"), None);
-        
-        // New categories
+
+        // Firewall vendors
         assert_eq!(infer_device_type("Firewalla Inc."), Some("firewall"));
         assert_eq!(infer_device_type("SonicWall"), Some("firewall"));
+
+        // Virtualization/service
         assert_eq!(infer_device_type("VMware, Inc."), Some("service"));
+
+        // Server hardware
         assert_eq!(infer_device_type("Supermicro"), Some("server"));
-        
-        // RouterBOARD (MikroTik)
-        assert_eq!(infer_device_type("Routerboard.com"), Some("router"));
     }
     
     #[test]

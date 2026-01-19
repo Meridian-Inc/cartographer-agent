@@ -44,6 +44,9 @@ static BACKGROUND_RUNNING: AtomicBool = AtomicBool::new(false);
 // Track if a network scan is currently in progress
 static SCANNING_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
+// Track if a health check is currently in progress
+static HEALTH_CHECK_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
 // Flag to request scan cancellation
 static SCAN_CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -215,6 +218,16 @@ pub fn is_scanning() -> bool {
     SCANNING_IN_PROGRESS.load(Ordering::Relaxed)
 }
 
+/// Check if a health check is currently in progress
+pub fn is_health_checking() -> bool {
+    HEALTH_CHECK_IN_PROGRESS.load(Ordering::Relaxed)
+}
+
+/// Check if any scan or health check operation is in progress
+pub fn is_busy() -> bool {
+    is_scanning() || is_health_checking()
+}
+
 /// Request cancellation of the current scan
 pub fn request_scan_cancel() {
     SCAN_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
@@ -292,8 +305,19 @@ async fn run_scan_and_upload(app: &AppHandle) {
 
 /// Helper to run health checks and upload
 async fn run_health_checks_and_upload(app: &AppHandle) {
+    // Skip if a scan or health check is already in progress
+    if is_scanning() {
+        tracing::debug!("Skipping health check - network scan in progress");
+        return;
+    }
+    if HEALTH_CHECK_IN_PROGRESS.swap(true, Ordering::SeqCst) {
+        tracing::debug!("Skipping health check - already in progress");
+        return;
+    }
+
     let mut devices = get_known_devices().await;
     if devices.is_empty() {
+        HEALTH_CHECK_IN_PROGRESS.store(false, Ordering::SeqCst);
         return;
     }
 
@@ -343,10 +367,25 @@ async fn run_health_checks_and_upload(app: &AppHandle) {
     if let Err(e) = app.emit("health-check-complete", (healthy_count, health_results.len())) {
         tracing::debug!("Failed to emit health-check-complete event: {}", e);
     }
+
+    // Mark health check as complete
+    HEALTH_CHECK_IN_PROGRESS.store(false, Ordering::SeqCst);
 }
 
 /// Helper to run health checks with progress events
 async fn run_health_checks_with_progress(app: &AppHandle) {
+    // Skip if a scan is in progress (but allow during initial sequence)
+    if is_scanning() {
+        tracing::debug!("Skipping health check with progress - network scan in progress");
+        return;
+    }
+    
+    // Skip if another health check is already running
+    if HEALTH_CHECK_IN_PROGRESS.swap(true, Ordering::SeqCst) {
+        tracing::debug!("Skipping health check with progress - already in progress");
+        return;
+    }
+
     let mut devices = get_known_devices().await;
     let total = devices.len();
 
@@ -363,6 +402,7 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
                 synced_to_cloud: Some(false),
             },
         );
+        HEALTH_CHECK_IN_PROGRESS.store(false, Ordering::SeqCst);
         return;
     }
 
@@ -478,6 +518,9 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
     if let Err(e) = app.emit("health-check-complete", (healthy_count, total)) {
         tracing::debug!("Failed to emit health-check-complete event: {}", e);
     }
+
+    // Mark health check as complete
+    HEALTH_CHECK_IN_PROGRESS.store(false, Ordering::SeqCst);
 }
 
 /// Run initial scan sequence: full scan followed by immediate health check

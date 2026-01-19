@@ -5,6 +5,13 @@ All notable changes to Cartographer Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+### [2.3.3](https://github.com/Meridian-Inc/cartographer-agent/compare/v2.3.2...v2.3.3) (2026-01-19)
+
+
+### 🐛 Bug Fixes
+
+* smart screen signing and tauri sign process ([88bbb32](https://github.com/Meridian-Inc/cartographer-agent/commit/88bbb32d9314552086de4be422640940069bee60))
+
 ### [2.3.2](https://github.com/Meridian-Inc/cartographer-agent/compare/v2.3.1...v2.3.2) (2026-01-18)
 
 

@@ -58,6 +58,12 @@ fn main() {
                 tracing::error!("Failed to create system tray: {}", e);
             }
 
+            // Check if we should start hidden (e.g., after a background update)
+            if persistence::take_restart_hidden() {
+                info!("Starting hidden after background update");
+                tray::hide_main_window(app.handle());
+            }
+
             // Set up close handler to minimize to tray instead of quitting
             if let Some(main_window) = app.get_webview_window("main") {
                 let app_handle = app.handle().clone();

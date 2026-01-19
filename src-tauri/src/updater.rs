@@ -1,6 +1,6 @@
 use crate::persistence;
 use semver::Version;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::UpdaterExt;
 use tokio::time::{interval, Duration};
 use tracing::{error, info, warn};
@@ -106,6 +106,17 @@ async fn check_for_updates(app_handle: AppHandle) -> Result<(), Box<dyn std::err
                     warn!("Failed to save silent update flag: {}", e);
                 }
 
+                // Check if the window is currently hidden (background update should stay hidden)
+                let window_hidden = app_handle
+                    .get_webview_window("main")
+                    .map(|w| !w.is_visible().unwrap_or(true))
+                    .unwrap_or(false);
+                
+                if let Err(e) = persistence::set_restart_hidden(window_hidden) {
+                    warn!("Failed to save restart hidden flag: {}", e);
+                }
+                info!("Window hidden before restart: {}", window_hidden);
+
                 // Install the update
                 info!("Installing update...");
                 update.install(bytes)?;
@@ -152,14 +163,78 @@ fn is_significant_update(current: &str, new: &str) -> Result<bool, semver::Error
 
 /// Check if a silent update just completed and emit an event to notify the frontend.
 /// This should be called on app startup after the frontend is ready.
+/// If the window is hidden, this will defer the notification until the window becomes visible.
 pub fn check_and_emit_silent_update(app_handle: &AppHandle) {
-    if let Some(version) = persistence::take_silent_update_version() {
-        info!("Silent update to version {} completed, notifying frontend", version);
+    // Check if there's a pending silent update notification
+    let version = match persistence::get_silent_update_version() {
+        Some(v) => v,
+        None => return, // No pending notification
+    };
 
-        let event = SilentUpdateCompletedEvent { version };
+    // Check if the window is currently visible
+    let window_visible = app_handle
+        .get_webview_window("main")
+        .map(|w| w.is_visible().unwrap_or(false))
+        .unwrap_or(false);
 
-        if let Err(e) = app_handle.emit(SILENT_UPDATE_COMPLETED_EVENT, &event) {
-            error!("Failed to emit silent-update-completed event: {}", e);
-        }
+    if window_visible {
+        // Window is visible, emit the notification now and clear the flag
+        emit_silent_update_notification(app_handle, &version);
+        let _ = persistence::take_silent_update_version(); // Clear the flag
+    } else {
+        // Window is hidden, set up a listener to emit when it becomes visible
+        info!("Window is hidden, deferring silent update notification for version {}", version);
+        setup_deferred_update_notification(app_handle.clone(), version);
     }
+}
+
+/// Emit the silent update completed notification to the frontend
+fn emit_silent_update_notification(app_handle: &AppHandle, version: &str) {
+    info!("Silent update to version {} completed, notifying frontend", version);
+
+    let event = SilentUpdateCompletedEvent {
+        version: version.to_string(),
+    };
+
+    if let Err(e) = app_handle.emit(SILENT_UPDATE_COMPLETED_EVENT, &event) {
+        error!("Failed to emit silent-update-completed event: {}", e);
+    }
+}
+
+/// Set up a listener to emit the silent update notification when the window becomes visible
+fn setup_deferred_update_notification(app_handle: AppHandle, version: String) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let notified = Arc::new(AtomicBool::new(false));
+    let notified_clone = notified.clone();
+
+    // Poll for window visibility since we can't easily hook into window events from here
+    tauri::async_runtime::spawn(async move {
+        loop {
+            // Check every 500ms if the window is visible
+            tokio::time::sleep(Duration::from_millis(500)).await;
+
+            // Check if we've already notified
+            if notified_clone.load(Ordering::SeqCst) {
+                break;
+            }
+
+            // Check if window is now visible
+            let window_visible = app_handle
+                .get_webview_window("main")
+                .map(|w| w.is_visible().unwrap_or(false))
+                .unwrap_or(false);
+
+            if window_visible {
+                // Clear the persisted flag first
+                let _ = persistence::take_silent_update_version();
+                
+                // Emit the notification
+                emit_silent_update_notification(&app_handle, &version);
+                notified_clone.store(true, Ordering::SeqCst);
+                break;
+            }
+        }
+    });
 }

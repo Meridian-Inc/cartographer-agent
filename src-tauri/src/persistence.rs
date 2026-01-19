@@ -23,6 +23,9 @@ pub struct AgentState {
     /// Version from a silent update that just completed (cleared after notification shown)
     #[serde(default)]
     pub silent_update_version: Option<String>,
+    /// Whether the app should start hidden after a restart (e.g., after background update)
+    #[serde(default)]
+    pub restart_hidden: bool,
 }
 
 /// Get the path to the state file
@@ -134,6 +137,12 @@ pub fn set_silent_update_version(version: &str) -> Result<()> {
     Ok(())
 }
 
+/// Get the silent update version flag without clearing it
+/// Returns the version if a silent update just occurred, None otherwise
+pub fn get_silent_update_version() -> Option<String> {
+    load_state().ok().and_then(|s| s.silent_update_version)
+}
+
 /// Get and clear the silent update version flag
 /// Returns the version if a silent update just occurred, None otherwise
 pub fn take_silent_update_version() -> Option<String> {
@@ -153,4 +162,35 @@ pub fn take_silent_update_version() -> Option<String> {
     }
 
     version
+}
+
+/// Set the restart hidden flag (called before restart after background update)
+pub fn set_restart_hidden(hidden: bool) -> Result<()> {
+    let mut state = load_state().unwrap_or_default();
+    state.restart_hidden = hidden;
+    save_state(&state)?;
+    tracing::info!("Set restart hidden flag: {}", hidden);
+    Ok(())
+}
+
+/// Get and clear the restart hidden flag
+/// Returns true if the app should stay hidden after restart
+pub fn take_restart_hidden() -> bool {
+    let mut state = match load_state() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    let hidden = state.restart_hidden;
+
+    if hidden {
+        state.restart_hidden = false;
+        if let Err(e) = save_state(&state) {
+            tracing::warn!("Failed to clear restart hidden flag: {}", e);
+        } else {
+            tracing::info!("Cleared restart hidden flag");
+        }
+    }
+
+    hidden
 }

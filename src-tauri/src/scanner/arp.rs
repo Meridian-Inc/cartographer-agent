@@ -69,6 +69,8 @@ fn get_arp_table_windows() -> Result<Vec<Device>> {
                         mac: Some(mac.replace('-', ":")),
                         response_time_ms: None,
                         hostname: None,
+                        vendor: None,
+                        device_type: None,
                     });
                 }
             }
@@ -111,6 +113,8 @@ fn get_arp_table_linux() -> Result<Vec<Device>> {
                     mac: Some(mac.to_string()),
                     response_time_ms: None,
                     hostname: None,
+                    vendor: None,
+                    device_type: None,
                 });
             }
         }
@@ -157,6 +161,8 @@ fn get_arp_table_macos() -> Result<Vec<Device>> {
                                 mac: Some(mac.to_string()),
                                 response_time_ms: None,
                                 hostname: None,
+                                vendor: None,
+                                device_type: None,
                             });
                         }
                     }

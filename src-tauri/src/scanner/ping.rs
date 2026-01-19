@@ -127,6 +127,8 @@ async fn ping_host(ip: &str) -> Result<Option<Device>> {
                     mac: None,
                     response_time_ms: Some(ping_time),
                     hostname: None,
+                    vendor: None,
+                    device_type: None,
                 }))
             }
             Err(_) => Ok(None),

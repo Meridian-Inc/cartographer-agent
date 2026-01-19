@@ -58,17 +58,17 @@
     </div>
 
     <!-- Legend -->
-    <div class="mt-5 space-y-1.5 text-sm">
+    <div class="mt-5 grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
       <div class="flex items-center gap-2">
-        <span class="w-3 h-3 rounded-full bg-green-500"></span>
+        <span class="w-3 h-3 rounded-full bg-green-500 shrink-0"></span>
         <span class="text-gray-300">{{ healthyPercent }}% Healthy ({{ healthyCount }})</span>
       </div>
       <div v-if="degradedCount > 0" class="flex items-center gap-2">
-        <span class="w-3 h-3 rounded-full bg-yellow-500"></span>
+        <span class="w-3 h-3 rounded-full bg-yellow-500 shrink-0"></span>
         <span class="text-gray-300">{{ degradedPercent }}% Degraded ({{ degradedCount }})</span>
       </div>
       <div v-if="offlineCount > 0" class="flex items-center gap-2">
-        <span class="w-3 h-3 rounded-full bg-red-500"></span>
+        <span class="w-3 h-3 rounded-full bg-red-500 shrink-0"></span>
         <span class="text-gray-300">{{ offlinePercent }}% Offline ({{ offlineCount }})</span>
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { listen } from '@tauri-apps/api/event'
-import { check } from '@tauri-apps/plugin-updater'
+import { check, type DownloadEvent } from '@tauri-apps/plugin-updater'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 
 export interface UpdateAvailableEvent {
@@ -60,7 +60,7 @@ export function useUpdater() {
       let totalContentLength: number | null = null
 
       // Download and install with progress callbacks
-      await update.downloadAndInstall((progress) => {
+      await update.downloadAndInstall((progress: DownloadEvent) => {
         if (progress.event === 'Started') {
           // Store content length from Started event
           totalContentLength = progress.data?.contentLength || null

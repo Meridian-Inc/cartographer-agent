@@ -143,6 +143,8 @@ impl CloudClient {
                     hostname: d.hostname.clone(),
                     // Mark device as gateway if its IP matches the detected gateway
                     is_gateway: gateway_ip.map_or(false, |gw| gw == d.ip),
+                    vendor: d.vendor.clone(),
+                    device_type: d.device_type.clone(),
                 })
                 .collect(),
             network_info: Some(NetworkInfo {
@@ -198,6 +200,8 @@ impl CloudClient {
                     response_time_ms: d.response_time_ms,
                     hostname: d.hostname.clone(),
                     is_gateway: false,
+                    vendor: d.vendor.clone(),
+                    device_type: d.device_type.clone(),
                 })
                 .collect(),
             network_info: None,
@@ -350,12 +354,17 @@ struct NetworkInfo {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ScanDevice {
     ip: String,
     mac: Option<String>,
     response_time_ms: Option<f64>,
     hostname: Option<String>,
     is_gateway: bool,
+    /// Device vendor/manufacturer from MAC OUI lookup
+    vendor: Option<String>,
+    /// Inferred device type based on vendor
+    device_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -6,8 +6,12 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 export interface Device {
   ip: string
   mac?: string
-  response_time_ms?: number
+  responseTimeMs?: number
   hostname?: string
+  /** Device vendor/manufacturer from MAC OUI lookup */
+  vendor?: string
+  /** Inferred device type based on vendor (e.g., "router", "apple", "nas", "iot") */
+  deviceType?: string
 }
 
 export interface AgentStatus {

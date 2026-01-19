@@ -1,5 +1,6 @@
 mod arp;
 mod ping;
+pub mod oui;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -44,11 +45,16 @@ pub(crate) fn hidden_command_sync(program: &str) -> Command {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Device {
     pub ip: String,
     pub mac: Option<String>,
     pub response_time_ms: Option<f64>,
     pub hostname: Option<String>,
+    /// Device vendor/manufacturer from MAC OUI lookup
+    pub vendor: Option<String>,
+    /// Inferred device type based on vendor (e.g., "router", "apple", "nas", "iot")
+    pub device_type: Option<String>,
 }
 
 /// Network information including interface, subnet, and gateway
@@ -93,7 +99,7 @@ fn get_local_hostname() -> Option<String> {
 }
 
 /// Deduplicate devices by IP address, keeping the most complete record.
-/// When duplicates are found, prefers the record with more data (MAC, hostname, response time).
+/// When duplicates are found, prefers the record with more data (MAC, hostname, response time, vendor).
 fn deduplicate_devices_by_ip(devices: Vec<Device>) -> Vec<Device> {
     use std::collections::HashMap;
 
@@ -107,6 +113,12 @@ fn deduplicate_devices_by_ip(devices: Vec<Device>) -> Vec<Device> {
             }
             if existing.hostname.is_none() && device.hostname.is_some() {
                 existing.hostname = device.hostname;
+            }
+            if existing.vendor.is_none() && device.vendor.is_some() {
+                existing.vendor = device.vendor;
+            }
+            if existing.device_type.is_none() && device.device_type.is_some() {
+                existing.device_type = device.device_type;
             }
             // Prefer non-zero response times
             if existing.response_time_ms.is_none()
@@ -122,6 +134,72 @@ fn deduplicate_devices_by_ip(devices: Vec<Device>) -> Vec<Device> {
     }
 
     by_ip.into_values().collect()
+}
+
+/// Enrich devices with vendor information from MAC OUI lookup.
+/// This populates the `vendor` and `device_type` fields based on MAC address.
+fn enrich_devices_with_vendor(devices: &mut [Device]) {
+    let total_devices = devices.len();
+    let devices_with_mac = devices.iter().filter(|d| d.mac.is_some()).count();
+    
+    tracing::info!(
+        "OUI enrichment starting: {} devices total, {} have MAC addresses",
+        total_devices,
+        devices_with_mac
+    );
+    
+    let mut lookup_count = 0;
+    let mut found_count = 0;
+    
+    for device in devices.iter_mut() {
+        // Skip if already has vendor info or no MAC address
+        if device.vendor.is_some() {
+            tracing::debug!("Skipping {} - already has vendor", device.ip);
+            continue;
+        }
+        if device.mac.is_none() {
+            tracing::debug!("Skipping {} - no MAC address", device.ip);
+            continue;
+        }
+
+        if let Some(ref mac) = device.mac {
+            lookup_count += 1;
+            
+            // Lookup vendor from MAC OUI database
+            if let Some(vendor) = oui::lookup_vendor(mac) {
+                found_count += 1;
+                
+                // First try to infer device type from vendor name
+                let mut device_type = oui::infer_device_type(&vendor).map(String::from);
+                
+                // If no device type from vendor, check MAC prefix for VMs/containers
+                if device_type.is_none() {
+                    device_type = oui::infer_device_type_from_mac(mac).map(String::from);
+                }
+                
+                tracing::info!("OUI: {} ({}) -> {} (type: {:?})", device.ip, mac, vendor, device_type);
+                device.vendor = Some(vendor);
+                device.device_type = device_type;
+            } else {
+                // Even if vendor not found, check MAC prefix for VMs/containers
+                if let Some(device_type) = oui::infer_device_type_from_mac(mac) {
+                    found_count += 1;
+                    tracing::info!("OUI: {} ({}) -> VM/Container (type: {})", device.ip, mac, device_type);
+                    device.vendor = Some("Virtual Machine".to_string());
+                    device.device_type = Some(device_type.to_string());
+                } else {
+                    tracing::warn!("OUI: {} ({}) -> NOT FOUND", device.ip, mac);
+                }
+            }
+        }
+    }
+    
+    tracing::info!(
+        "OUI enrichment complete: looked up {} MACs, found {} vendors ({:.0}%)",
+        lookup_count,
+        found_count,
+        if lookup_count > 0 { (found_count as f64 / lookup_count as f64) * 100.0 } else { 0.0 }
+    );
 }
 
 /// Progress updates during network scanning
@@ -289,6 +367,8 @@ pub async fn scan_network_with_progress(
                 mac: None,
                 response_time_ms: Some(0.0), // Local machine has instant response
                 hostname: local_hostname,
+                vendor: None,
+                device_type: None,
             });
         }
     }
@@ -320,7 +400,14 @@ pub async fn scan_network_with_progress(
     }
 
     // Deduplicate devices by IP address (in case of duplicates from ARP or ping)
-    let devices = deduplicate_devices_by_ip(devices);
+    let mut devices = deduplicate_devices_by_ip(devices);
+
+    // Enrich devices with vendor information from MAC OUI lookup
+    enrich_devices_with_vendor(&mut devices);
+    let vendor_count = devices.iter().filter(|d| d.vendor.is_some()).count();
+    if vendor_count > 0 {
+        tracing::info!("Identified {} device vendors from MAC addresses", vendor_count);
+    }
 
     // Stage 5: Complete
     let total_duration = scan_start.elapsed();

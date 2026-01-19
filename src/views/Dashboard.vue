@@ -265,12 +265,17 @@
     <div v-if="showDeviceList" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" @click.self="showDeviceList = false">
       <div class="bg-dark-800 border border-dark-600 rounded-xl p-6 max-w-lg w-full max-h-[80vh] overflow-hidden flex flex-col">
         <div class="flex items-center justify-between mb-4">
-          <h2 class="text-lg font-semibold text-white flex items-center gap-2">
-            <svg class="w-5 h-5 text-brand-cyan" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-            </svg>
-            {{ devices.length }} Device{{ devices.length !== 1 ? 's' : '' }}
-          </h2>
+          <div>
+            <h2 class="text-lg font-semibold text-white flex items-center gap-2">
+              <svg class="w-5 h-5 text-brand-cyan" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              {{ devices.length }} Device{{ devices.length !== 1 ? 's' : '' }}
+            </h2>
+            <p v-if="vendorSummary" class="text-xs text-gray-400 mt-1 ml-7">
+              {{ vendorSummary }}
+            </p>
+          </div>
           <button
             @click="showDeviceList = false"
             class="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-dark-700 transition-colors"
@@ -318,7 +323,9 @@ interface HealthCheckStatus {
     ip: string
     mac: string | null
     hostname: string | null
-    response_time_ms: number | null
+    responseTimeMs: number | null
+    vendor: string | null
+    deviceType: string | null
   }>
 }
 
@@ -395,17 +402,17 @@ const deviceHealthStats = computed(() => {
 
   for (const device of devs) {
     // Device has response time data
-    if (device.response_time_ms !== null && device.response_time_ms !== undefined) {
-      if (device.response_time_ms > 0) {
+    if (device.responseTimeMs !== null && device.responseTimeMs !== undefined) {
+      if (device.responseTimeMs > 0) {
         // Good ping response
-        if (device.response_time_ms <= 100) {
+        if (device.responseTimeMs <= 100) {
           healthy++
         } else {
           // High latency = degraded
           degraded++
         }
       } else {
-        // response_time_ms === 0 means ARP detected but no ping response
+        // responseTimeMs === 0 means ARP detected but no ping response
         // Still consider it healthy (reachable via ARP)
         healthy++
       }
@@ -416,6 +423,31 @@ const deviceHealthStats = computed(() => {
   }
 
   return { healthy, degraded, offline }
+})
+
+// Compute vendor summary for display in the device list modal
+const vendorSummary = computed(() => {
+  const vendors = devices.value
+    .filter(d => d.vendor)
+    .map(d => d.vendor!)
+  
+  if (vendors.length === 0) return null
+  
+  // Count unique vendors (simplified names)
+  const counts: Record<string, number> = {}
+  for (const vendor of vendors) {
+    // Simplify vendor name (e.g., "Apple, Inc." -> "Apple")
+    const simple = vendor.split(/[,\s]/)[0]
+    counts[simple] = (counts[simple] || 0) + 1
+  }
+  
+  // Get top 3 vendors
+  const top = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([name, count]) => `${count} ${name}`)
+  
+  return top.join(', ')
 })
 
 // Determine overall network health status for the indicator dot
@@ -558,14 +590,16 @@ async function handleHealthCheck() {
       timestamp
     }
     // Use the devices returned directly from the health check result
-    // This ensures we have the updated response_time_ms values
+    // This ensures we have the updated responseTimeMs values
     // Map null values to undefined to match Device type
     if (result.devices && result.devices.length > 0) {
       const mappedDevices = result.devices.map(d => ({
         ip: d.ip,
         mac: d.mac ?? undefined,
         hostname: d.hostname ?? undefined,
-        response_time_ms: d.response_time_ms ?? undefined
+        responseTimeMs: d.responseTimeMs ?? undefined,
+        vendor: d.vendor ?? undefined,
+        deviceType: d.deviceType ?? undefined
       }))
       agentStore.updateDevices(mappedDevices)
     }

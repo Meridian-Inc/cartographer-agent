@@ -5,6 +5,13 @@ All notable changes to Cartographer Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0](https://github.com/Meridian-Inc/cartographer-agent/compare/v2.3.5...v2.4.0) (2026-01-19)
+
+
+### ✨ Features
+
+* add OUI lookup ([4cb34b3](https://github.com/Meridian-Inc/cartographer-agent/commit/4cb34b38e22eaa50e34edcdb5a7f225d7e92feb3))
+
 ### [2.3.5](https://github.com/Meridian-Inc/cartographer-agent/compare/v2.3.4...v2.3.5) (2026-01-19)
 
 

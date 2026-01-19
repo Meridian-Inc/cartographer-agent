@@ -99,6 +99,27 @@ jobs:
           args: ${{ matrix.args }}
           includeUpdaterJson: true
 
+      # Sign Windows artifacts with Azure Trusted Signing BEFORE generating Tauri updater signatures
+      # This ensures the .sig files are generated from the code-signed binaries
+      - name: Sign Windows artifacts with Azure Trusted Signing
+        if: matrix.platform == 'windows-latest' && env.AZURE_TENANT_ID != ''
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        uses: azure/trusted-signing-action@v0.5.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE }}
+          files-folder: ${{ github.workspace }}/src-tauri/target/release/bundle
+          files-folder-filter: exe,msi
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
       - name: Manually sign update bundles
         run: |
           echo "=== Manually signing ALL bundles ==="
@@ -192,27 +213,29 @@ jobs:
       # Note: Tauri action automatically generates and signs update manifests
       # The latest.json will be available at the endpoint configured in tauri.conf.json
 
-      # Sign Windows artifacts with Azure Trusted Signing (if configured)
-      # To enable: add AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET,
-      # AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT, AZURE_CERT_PROFILE secrets
-      - name: Sign Windows artifacts with Azure Trusted Signing
+      # Re-upload signed Windows artifacts to replace the unsigned ones uploaded by tauri-action
+      - name: Upload signed Windows artifacts
         if: matrix.platform == 'windows-latest' && env.AZURE_TENANT_ID != ''
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-        uses: azure/trusted-signing-action@v0.5.0
-        with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE }}
-          files-folder: ${{ github.workspace }}/src-tauri/target/release/bundle
-          files-folder-filter: exe,msi
-          files-folder-recurse: true
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Re-uploading signed Windows artifacts ==="
+          
+          # Find and upload signed .exe files
+          for exe in $(find src-tauri/target/release/bundle -name "*.exe" -type f); do
+            echo "Uploading signed: $exe"
+            gh release upload "${{ github.ref_name }}" "$exe" --clobber
+          done
+          
+          # Find and upload signed .msi files
+          for msi in $(find src-tauri/target/release/bundle -name "*.msi" -type f); do
+            echo "Uploading signed: $msi"
+            gh release upload "${{ github.ref_name }}" "$msi" --clobber
+          done
+          
+          echo "=== Signed artifacts uploaded ==="
+        shell: bash
 
   # Finalize release with changelog
   finalize-release:

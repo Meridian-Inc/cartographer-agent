@@ -1,6 +1,6 @@
 <template>
   <div
-    class="h-8 bg-dark-800 border-b border-dark-600 flex items-center justify-between px-3 select-none"
+    class="h-8 bg-dark-800 border-b border-dark-600 flex items-center justify-between px-3 select-none relative z-[100]"
     @mousedown="startDrag"
   >
     <!-- Left side: App icon and title -->

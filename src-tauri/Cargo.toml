@@ -37,6 +37,12 @@ winreg = { version = "0.50", optional = true }
 # MAC OUI vendor lookup (uses IEEE OUI database - all registries: MA-L, MA-M, MA-S, CID, IAB)
 oui-data = "0.2"
 
+# Secure credential storage using platform keychains
+keyring = "3"
+
+# Config file parsing
+toml = "0.8"
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.50"
 

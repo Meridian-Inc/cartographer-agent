@@ -7,9 +7,195 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::process::Command;
 use std::time::Instant;
+use thiserror::Error;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+
+/// Scanner-specific errors with user-friendly messages
+#[derive(Debug, Error)]
+pub enum ScanError {
+    /// Elevated privileges are required for this operation
+    #[error("Elevated privileges required: {message}")]
+    PrivilegeRequired {
+        message: String,
+        platform_instructions: String,
+    },
+
+    /// Network interface not found or not configured
+    #[error("Network not available: {0}")]
+    NetworkNotAvailable(String),
+
+    /// Scan operation timed out
+    #[error("Scan timed out: {0}")]
+    Timeout(String),
+
+    /// General scan error
+    #[error("Scan failed: {0}")]
+    General(String),
+}
+
+impl ScanError {
+    /// Create a privilege required error with platform-specific instructions
+    pub fn privilege_required(operation: &str) -> Self {
+        let (message, instructions) = get_privilege_instructions(operation);
+        ScanError::PrivilegeRequired {
+            message,
+            platform_instructions: instructions,
+        }
+    }
+
+    /// Get user-friendly description and instructions
+    pub fn user_message(&self) -> String {
+        match self {
+            ScanError::PrivilegeRequired {
+                message,
+                platform_instructions,
+            } => {
+                format!("{}\n\n{}", message, platform_instructions)
+            }
+            ScanError::NetworkNotAvailable(msg) => {
+                format!("Network is not available: {}\n\nPlease check your network connection and try again.", msg)
+            }
+            ScanError::Timeout(msg) => {
+                format!("The scan took too long: {}\n\nThis may happen on large networks. Try scanning a smaller range.", msg)
+            }
+            ScanError::General(msg) => msg.clone(),
+        }
+    }
+}
+
+/// Get platform-specific privilege instructions
+fn get_privilege_instructions(operation: &str) -> (String, String) {
+    let message = format!(
+        "The {} operation requires elevated privileges to access network information.",
+        operation
+    );
+
+    #[cfg(target_os = "windows")]
+    let instructions = r#"To run with elevated privileges on Windows:
+1. Right-click on Cartographer Agent
+2. Select "Run as administrator"
+
+Alternatively, you can:
+- Open Command Prompt as Administrator
+- Run the agent from there"#
+        .to_string();
+
+    #[cfg(target_os = "macos")]
+    let instructions = r#"To run with elevated privileges on macOS:
+1. Open System Preferences > Security & Privacy
+2. Go to the Privacy tab
+3. Select "Full Disk Access" or "Network"
+4. Add Cartographer Agent to the allowed applications
+
+Or run from Terminal with:
+  sudo /Applications/Cartographer\ Agent.app/Contents/MacOS/cartographer-agent"#
+        .to_string();
+
+    #[cfg(target_os = "linux")]
+    let instructions = r#"To run with elevated privileges on Linux:
+1. Run the agent with sudo:
+   sudo cartographer-agent
+
+2. Or add capabilities to the binary:
+   sudo setcap cap_net_raw,cap_net_admin+eip /path/to/cartographer-agent
+
+3. Or add your user to the 'netdev' group:
+   sudo usermod -aG netdev $USER
+   (then log out and back in)"#
+        .to_string();
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    let instructions = "Please run the application with elevated/root privileges.".to_string();
+
+    (message, instructions)
+}
+
+/// Check if the current process has sufficient privileges for full network scanning
+/// Returns Ok(true) for full privileges, Ok(false) for limited/fallback mode
+pub fn check_scan_privileges() -> Result<bool, ScanError> {
+    #[cfg(target_os = "windows")]
+    {
+        // On Windows, most operations work without elevation
+        // We'll use fallback mode and catch errors at runtime
+        Ok(true)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Check if we can access /proc/net/arp (basic ARP access)
+        let can_read_arp = std::fs::read_to_string("/proc/net/arp").is_ok();
+
+        // Check if we can use raw sockets (for ICMP ping)
+        // This requires CAP_NET_RAW or running as root
+        let can_ping = std::process::Command::new("ping")
+            .args(["-c", "1", "-W", "1", "127.0.0.1"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if can_read_arp {
+            if can_ping {
+                Ok(true) // Full privileges
+            } else {
+                tracing::warn!("Running in fallback mode: ping may not work without CAP_NET_RAW");
+                Ok(false) // Limited mode - ARP only
+            }
+        } else {
+            Err(ScanError::privilege_required("network scanning"))
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // macOS typically allows ARP and ping without elevation
+        Ok(true)
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        Ok(true)
+    }
+}
+
+/// Check if fallback (limited) scanning mode should be used
+pub fn should_use_fallback_mode() -> bool {
+    match check_scan_privileges() {
+        Ok(full_privileges) => !full_privileges,
+        Err(_) => true, // If we can't determine, try fallback
+    }
+}
+
+/// Wrapper to convert privilege errors into user-friendly messages
+pub fn handle_scan_error(error: anyhow::Error) -> ScanError {
+    let error_str = error.to_string().to_lowercase();
+
+    // Detect permission-related errors
+    if error_str.contains("permission denied")
+        || error_str.contains("access denied")
+        || error_str.contains("operation not permitted")
+        || error_str.contains("requires elevation")
+        || error_str.contains("administrator")
+    {
+        return ScanError::privilege_required("network scanning");
+    }
+
+    // Detect network-related errors
+    if error_str.contains("network is unreachable")
+        || error_str.contains("no route to host")
+        || error_str.contains("network interface")
+    {
+        return ScanError::NetworkNotAvailable(error.to_string());
+    }
+
+    // Detect timeout errors
+    if error_str.contains("timed out") || error_str.contains("timeout") {
+        return ScanError::Timeout(error.to_string());
+    }
+
+    ScanError::General(error.to_string())
+}
 
 /// Windows flags to hide console window when spawning processes
 #[cfg(target_os = "windows")]
@@ -236,6 +422,8 @@ pub enum ScanStage {
     Complete,
     /// Scan failed
     Failed,
+    /// Elevated privileges required
+    PrivilegeRequired,
 }
 
 /// Callback type for scan progress updates
@@ -269,6 +457,29 @@ pub async fn scan_network_with_progress(
         }
     };
 
+    // Pre-flight check: verify we have sufficient privileges
+    let fallback_mode = match check_scan_privileges() {
+        Ok(full_privileges) => {
+            if !full_privileges {
+                tracing::warn!("Running scan in fallback mode (limited privileges)");
+                emit_progress(
+                    ScanStage::Starting,
+                    "Starting scan in limited mode (some features may be unavailable)",
+                    Some(0),
+                    None,
+                );
+                true
+            } else {
+                false
+            }
+        }
+        Err(e) => {
+            // Try fallback mode before failing completely
+            tracing::warn!("Privilege check failed, attempting fallback mode: {}", e);
+            true
+        }
+    };
+
     // Stage 1: Detect network configuration
     emit_progress(
         ScanStage::DetectingNetwork,
@@ -276,7 +487,23 @@ pub async fn scan_network_with_progress(
         Some(5),
         None,
     );
-    let network_info = get_full_network_info().await?;
+    let network_info = match get_full_network_info().await {
+        Ok(info) => info,
+        Err(e) => {
+            let scan_error = handle_scan_error(e);
+            emit_progress(
+                if matches!(scan_error, ScanError::PrivilegeRequired { .. }) {
+                    ScanStage::PrivilegeRequired
+                } else {
+                    ScanStage::Failed
+                },
+                &scan_error.user_message(),
+                Some(0),
+                None,
+            );
+            return Err(anyhow::anyhow!("{}", scan_error.user_message()));
+        }
+    };
 
     tracing::info!(
         "Network: {} on {} (gateway: {:?})",
@@ -302,50 +529,61 @@ pub async fn scan_network_with_progress(
         Some(arp_count),
     );
 
-    // Stage 3: Ping sweep
-    emit_progress(
-        ScanStage::PingSweep,
-        "Discovering devices on network (ping sweep)...",
-        Some(20),
-        Some(devices.len()),
-    );
+    // Stage 3: Ping sweep (skip in fallback mode if we already have ARP devices)
+    let skip_ping = fallback_mode && !devices.is_empty();
 
-    let ping_start = Instant::now();
-    match ping::ping_sweep(&network_info.subnet).await {
-        Ok(pinged_devices) => {
-            let ping_duration = ping_start.elapsed();
-            tracing::info!(
-                "Ping sweep complete: {} responding hosts in {:.1}s",
-                pinged_devices.len(),
-                ping_duration.as_secs_f64()
-            );
+    if skip_ping {
+        emit_progress(
+            ScanStage::PingSweep,
+            &format!("Skipping ping sweep in limited mode ({} devices from ARP)", devices.len()),
+            Some(50),
+            Some(devices.len()),
+        );
+    } else {
+        emit_progress(
+            ScanStage::PingSweep,
+            "Discovering devices on network (ping sweep)...",
+            Some(20),
+            Some(devices.len()),
+        );
 
-            // Merge ping results with ARP data
-            for pinged in pinged_devices {
-                if let Some(existing) = devices.iter_mut().find(|d| d.ip == pinged.ip) {
-                    existing.response_time_ms = pinged.response_time_ms;
-                } else {
-                    devices.push(pinged);
+        let ping_start = Instant::now();
+        match ping::ping_sweep(&network_info.subnet).await {
+            Ok(pinged_devices) => {
+                let ping_duration = ping_start.elapsed();
+                tracing::info!(
+                    "Ping sweep complete: {} responding hosts in {:.1}s",
+                    pinged_devices.len(),
+                    ping_duration.as_secs_f64()
+                );
+
+                // Merge ping results with ARP data
+                for pinged in pinged_devices {
+                    if let Some(existing) = devices.iter_mut().find(|d| d.ip == pinged.ip) {
+                        existing.response_time_ms = pinged.response_time_ms;
+                    } else {
+                        devices.push(pinged);
+                    }
                 }
-            }
 
-            emit_progress(
-                ScanStage::PingSweep,
-                &format!("Discovered {} total devices", devices.len()),
-                Some(50),
-                Some(devices.len()),
-            );
+                emit_progress(
+                    ScanStage::PingSweep,
+                    &format!("Discovered {} total devices", devices.len()),
+                    Some(50),
+                    Some(devices.len()),
+                );
+            }
+            Err(e) => {
+                tracing::warn!("Ping sweep failed: {}", e);
+                emit_progress(
+                    ScanStage::PingSweep,
+                    &format!("Ping sweep had issues: {}", e),
+                    Some(50),
+                    Some(devices.len()),
+                );
+            }
         }
-        Err(e) => {
-            tracing::warn!("Ping sweep failed: {}", e);
-            emit_progress(
-                ScanStage::PingSweep,
-                &format!("Ping sweep had issues: {}", e),
-                Some(50),
-                Some(devices.len()),
-            );
-        }
-    }
+    } // end if !skip_ping
 
     // Ensure the local machine is included in the device list with its hostname
     if let Some(ref local_ip) = network_info.local_ip {

@@ -124,7 +124,67 @@ The agent requires network access to:
 - Upload results to Cartographer Cloud
 - Authenticate with Cartographer Cloud
 
-**Note**: On some systems, network scanning may require elevated privileges. The agent will attempt to use the most appropriate method available.
+### Privilege Requirements
+
+Network scanning works best with elevated privileges. Without them, the agent
+operates in **limited mode** (ARP table only, no ping sweep).
+
+| Platform | Full Mode                        | Limited Mode         |
+|----------|----------------------------------|----------------------|
+| Windows  | Run as Administrator             | Most features work   |
+| macOS    | Run as root (`sudo`)             | Most features work   |
+| Linux    | See options below                | ARP only             |
+
+**Linux Options for Full Mode:**
+
+1. **Run as root** (not recommended for desktop use):
+   ```bash
+   sudo cartographer-agent
+   ```
+
+2. **Add capabilities** (recommended):
+   ```bash
+   sudo setcap cap_net_raw,cap_net_admin+eip /path/to/cartographer-agent
+   ```
+
+3. **Add user to netdev group**:
+   ```bash
+   sudo usermod -aG netdev $USER
+   # Then log out and back in
+   ```
+
+## Security
+
+### Credential Storage
+
+Your authentication tokens are stored securely using the platform's native secret storage:
+
+| Platform | Storage Backend            |
+|----------|----------------------------|
+| Windows  | Windows Credential Manager |
+| macOS    | Keychain                   |
+| Linux    | Secret Service (GNOME Keyring, KWallet) |
+
+**Note**: Credentials are never stored in plaintext files. Legacy `credentials.json`
+files from older versions are automatically migrated and deleted.
+
+### Custom Cloud Endpoint
+
+For self-hosted or enterprise Cartographer Cloud deployments, configure a custom endpoint:
+
+**Option 1: Environment Variable**
+```bash
+export CARTOGRAPHER_CLOUD_URL=https://cartographer.mycompany.internal/api
+```
+
+**Option 2: Config File**
+
+Create `~/.config/cartographer/config.toml`:
+```toml
+cloud_url = "https://cartographer.mycompany.internal/api"
+```
+
+Priority order: Environment variable > Config file > Default (`https://cartographer.network/api`)
 
 ## Troubleshooting
 

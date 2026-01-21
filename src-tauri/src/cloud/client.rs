@@ -1,8 +1,68 @@
 use crate::scanner::{Device, ScanResult};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::env;
+use std::fs;
+use std::path::PathBuf;
 
-const CLOUD_BASE_URL: &str = "https://cartographer.network/api";
+/// Default cloud API URL
+const DEFAULT_CLOUD_BASE_URL: &str = "https://cartographer.network/api";
+
+/// Environment variable for custom cloud endpoint
+const ENV_CLOUD_URL: &str = "CARTOGRAPHER_CLOUD_URL";
+
+/// Config file structure for agent settings
+#[derive(Debug, Default, Deserialize)]
+struct AgentConfig {
+    #[serde(default)]
+    cloud_url: Option<String>,
+}
+
+fn get_config_path() -> Option<PathBuf> {
+    dirs::config_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        .map(|dir| dir.join("cartographer").join("config.toml"))
+}
+
+fn load_config() -> AgentConfig {
+    if let Some(path) = get_config_path() {
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(config) = toml::from_str(&content) {
+                    return config;
+                }
+            }
+        }
+    }
+    AgentConfig::default()
+}
+
+/// Get the cloud base URL from (in priority order):
+/// 1. Environment variable CARTOGRAPHER_CLOUD_URL
+/// 2. Config file ~/.config/cartographer/config.toml
+/// 3. Default: https://cartographer.network/api
+fn get_cloud_base_url() -> String {
+    // 1. Check environment variable
+    if let Ok(url) = env::var(ENV_CLOUD_URL) {
+        if !url.is_empty() {
+            tracing::debug!("Using cloud URL from environment: {}", url);
+            return url;
+        }
+    }
+
+    // 2. Check config file
+    let config = load_config();
+    if let Some(url) = config.cloud_url {
+        if !url.is_empty() {
+            tracing::debug!("Using cloud URL from config file: {}", url);
+            return url;
+        }
+    }
+
+    // 3. Use default
+    tracing::debug!("Using default cloud URL: {}", DEFAULT_CLOUD_BASE_URL);
+    DEFAULT_CLOUD_BASE_URL.to_string()
+}
 
 #[derive(Debug, Clone)]
 pub struct CloudClient {
@@ -12,8 +72,18 @@ pub struct CloudClient {
 impl CloudClient {
     pub fn new() -> Self {
         Self {
-            base_url: CLOUD_BASE_URL.to_string(),
+            base_url: get_cloud_base_url(),
         }
+    }
+
+    /// Create a client with a custom base URL (for testing or self-hosted)
+    pub fn with_base_url(base_url: String) -> Self {
+        Self { base_url }
+    }
+
+    /// Get the current base URL
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 
     pub async fn request_device_code(&self) -> Result<DeviceCodeResponse> {
@@ -291,7 +361,11 @@ impl CloudClient {
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
         
         // Navigate to the core app with network context
-        let url = format!("https://cartographer.network/app/network/{}", creds.network_id);
+        // Extract base domain from API URL (remove /api suffix)
+        let base_domain = self.base_url
+            .trim_end_matches("/api")
+            .trim_end_matches("/");
+        let url = format!("{}/app/network/{}", base_domain, creds.network_id);
         webbrowser::open(&url)
             .context("Failed to open dashboard in browser")
     }

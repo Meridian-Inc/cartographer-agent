@@ -128,14 +128,29 @@ impl CloudClient {
             }
             400 => {
                 // Still waiting (authorization_pending) or other error
-                // Check the error type in the response
-                let error_resp: Result<TokenErrorResponse, _> = resp.json().await;
-                if let Ok(err) = error_resp {
+                // FastAPI wraps HTTPException in a "detail" field
+                let body = resp.text().await.unwrap_or_default();
+                
+                // Try FastAPI format first: {"detail": {"error": "...", "error_description": "..."}}
+                if let Ok(fastapi_err) = serde_json::from_str::<FastApiErrorResponse>(&body) {
+                    if fastapi_err.detail.error == "authorization_pending" {
+                        return Ok(None);
+                    }
+                    return Err(anyhow::anyhow!("{}: {}", 
+                        fastapi_err.detail.error, 
+                        fastapi_err.detail.error_description.unwrap_or_default()));
+                }
+                
+                // Fall back to direct format: {"error": "...", "error_description": "..."}
+                if let Ok(err) = serde_json::from_str::<TokenErrorResponse>(&body) {
                     if err.error == "authorization_pending" {
                         return Ok(None);
                     }
                     return Err(anyhow::anyhow!("{}: {}", err.error, err.error_description.unwrap_or_default()));
                 }
+                
+                // Unknown 400 error - continue polling
+                tracing::warn!("Unknown 400 response during token poll: {}", body);
                 Ok(None)
             }
             _ => {
@@ -401,6 +416,12 @@ struct TokenRequest {
 struct TokenErrorResponse {
     error: String,
     error_description: Option<String>,
+}
+
+/// FastAPI wraps HTTPException responses in a "detail" field
+#[derive(Debug, Serialize, Deserialize)]
+struct FastApiErrorResponse {
+    detail: TokenErrorResponse,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

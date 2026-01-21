@@ -206,9 +206,9 @@ export const useAgentStore = defineStore('agent', () => {
   async function completeLogin(deviceCode: string, expiresIn: number, pollInterval: number): Promise<boolean> {
     try {
       const result = await invoke<AgentStatus>('complete_login', {
-        deviceCode,
-        expiresIn,
-        pollInterval
+        device_code: deviceCode,
+        expires_in: expiresIn,
+        poll_interval: pollInterval
       })
       status.value = result
       // Sync scanning state from backend - scan starts immediately after login

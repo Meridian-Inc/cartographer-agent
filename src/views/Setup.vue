@@ -172,7 +172,8 @@ async function handleLogin() {
       return
     }
     console.error('Login error:', error)
-    const msg = error instanceof Error ? error.message : 'Unknown error'
+    // Tauri returns errors as strings, not Error objects
+    const msg = typeof error === 'string' ? error : error instanceof Error ? error.message : String(error)
     if (msg.includes('expired')) {
       errorMessage.value = 'Connection timed out. Please try again.'
     } else {

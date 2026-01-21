@@ -1,6 +1,7 @@
 mod arp;
 mod ping;
 pub mod oui;
+pub mod privileges;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -72,6 +73,8 @@ pub struct NetworkInfo {
 pub struct ScanResult {
     pub devices: Vec<Device>,
     pub network_info: NetworkInfo,
+    /// Scan capabilities and mode (full or limited)
+    pub capabilities: privileges::ScanCapabilities,
 }
 
 /// Get the local machine's hostname
@@ -269,6 +272,34 @@ pub async fn scan_network_with_progress(
         }
     };
 
+    // Stage 0: Detect scan capabilities
+    emit_progress(
+        ScanStage::Starting,
+        "Checking scan capabilities...",
+        Some(2),
+        None,
+    );
+    let capabilities = privileges::detect_capabilities().await;
+
+    // Log capability detection results
+    if capabilities.mode == privileges::ScanMode::Limited {
+        tracing::warn!(
+            "Running with limited scan capabilities: {:?}",
+            capabilities.warning
+        );
+        emit_progress(
+            ScanStage::Starting,
+            &format!(
+                "Running with limited capabilities: {}",
+                capabilities.warning.as_deref().unwrap_or("some features unavailable")
+            ),
+            Some(3),
+            None,
+        );
+    } else {
+        tracing::info!("Running with full scan capabilities");
+    }
+
     // Stage 1: Detect network configuration
     emit_progress(
         ScanStage::DetectingNetwork,
@@ -302,49 +333,59 @@ pub async fn scan_network_with_progress(
         Some(arp_count),
     );
 
-    // Stage 3: Ping sweep
-    emit_progress(
-        ScanStage::PingSweep,
-        "Discovering devices on network (ping sweep)...",
-        Some(20),
-        Some(devices.len()),
-    );
+    // Stage 3: Ping sweep (skip if capability not available)
+    if capabilities.can_ping {
+        emit_progress(
+            ScanStage::PingSweep,
+            "Discovering devices on network (ping sweep)...",
+            Some(20),
+            Some(devices.len()),
+        );
 
-    let ping_start = Instant::now();
-    match ping::ping_sweep(&network_info.subnet).await {
-        Ok(pinged_devices) => {
-            let ping_duration = ping_start.elapsed();
-            tracing::info!(
-                "Ping sweep complete: {} responding hosts in {:.1}s",
-                pinged_devices.len(),
-                ping_duration.as_secs_f64()
-            );
+        let ping_start = Instant::now();
+        match ping::ping_sweep(&network_info.subnet).await {
+            Ok(pinged_devices) => {
+                let ping_duration = ping_start.elapsed();
+                tracing::info!(
+                    "Ping sweep complete: {} responding hosts in {:.1}s",
+                    pinged_devices.len(),
+                    ping_duration.as_secs_f64()
+                );
 
-            // Merge ping results with ARP data
-            for pinged in pinged_devices {
-                if let Some(existing) = devices.iter_mut().find(|d| d.ip == pinged.ip) {
-                    existing.response_time_ms = pinged.response_time_ms;
-                } else {
-                    devices.push(pinged);
+                // Merge ping results with ARP data
+                for pinged in pinged_devices {
+                    if let Some(existing) = devices.iter_mut().find(|d| d.ip == pinged.ip) {
+                        existing.response_time_ms = pinged.response_time_ms;
+                    } else {
+                        devices.push(pinged);
+                    }
                 }
-            }
 
-            emit_progress(
-                ScanStage::PingSweep,
-                &format!("Discovered {} total devices", devices.len()),
-                Some(50),
-                Some(devices.len()),
-            );
+                emit_progress(
+                    ScanStage::PingSweep,
+                    &format!("Discovered {} total devices", devices.len()),
+                    Some(50),
+                    Some(devices.len()),
+                );
+            }
+            Err(e) => {
+                tracing::warn!("Ping sweep failed: {}", e);
+                emit_progress(
+                    ScanStage::PingSweep,
+                    &format!("Ping sweep had issues: {}", e),
+                    Some(50),
+                    Some(devices.len()),
+                );
+            }
         }
-        Err(e) => {
-            tracing::warn!("Ping sweep failed: {}", e);
-            emit_progress(
-                ScanStage::PingSweep,
-                &format!("Ping sweep had issues: {}", e),
-                Some(50),
-                Some(devices.len()),
-            );
-        }
+    } else {
+        tracing::warn!("Ping sweep skipped: insufficient privileges");
+        emit_progress(
+            ScanStage::PingSweep,
+            "Ping sweep skipped (requires elevated privileges). Using ARP table only.",
+            Some(50),
+            Some(devices.len()),
+        );
     }
 
     // Ensure the local machine is included in the device list with its hostname
@@ -425,6 +466,7 @@ pub async fn scan_network_with_progress(
     Ok(ScanResult {
         devices,
         network_info,
+        capabilities,
     })
 }
 

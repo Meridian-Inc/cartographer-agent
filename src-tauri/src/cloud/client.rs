@@ -1,23 +1,45 @@
 use crate::scanner::{Device, ScanResult};
+use super::config::{load_cloud_config, CloudEndpointConfig};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-const CLOUD_BASE_URL: &str = "https://cartographer.network/api";
-
 #[derive(Debug, Clone)]
 pub struct CloudClient {
-    base_url: String,
+    config: CloudEndpointConfig,
 }
 
 impl CloudClient {
+    /// Create a new CloudClient with configuration loaded from:
+    /// 1. Environment variable (CARTOGRAPHER_CLOUD_URL)
+    /// 2. Config file (~/.config/cartographer/config.toml)
+    /// 3. Default values (https://cartographer.network/api)
     pub fn new() -> Self {
-        Self {
-            base_url: CLOUD_BASE_URL.to_string(),
-        }
+        let config = load_cloud_config();
+        tracing::debug!(
+            "CloudClient initialized with {} endpoint: {}",
+            config.source,
+            config.api_url
+        );
+        Self { config }
+    }
+
+    /// Create a CloudClient with a custom configuration
+    pub fn with_config(config: CloudEndpointConfig) -> Self {
+        Self { config }
+    }
+
+    /// Get the base API URL
+    pub fn base_url(&self) -> &str {
+        &self.config.api_url
+    }
+
+    /// Get the dashboard URL
+    pub fn dashboard_url(&self) -> &str {
+        &self.config.dashboard_url
     }
 
     pub async fn request_device_code(&self) -> Result<DeviceCodeResponse> {
-        let url = format!("{}/agent/device-code", self.base_url);
+        let url = format!("{}/agent/device-code", self.config.api_url);
         
         let client = reqwest::Client::new();
         let resp = client
@@ -36,7 +58,7 @@ impl CloudClient {
     }
 
     pub async fn poll_for_token(&self, device_code: &str) -> Result<Option<TokenResponse>> {
-        let url = format!("{}/agent/token", self.base_url);
+        let url = format!("{}/agent/token", self.config.api_url);
         
         let client = reqwest::Client::new();
         let resp = client
@@ -79,7 +101,7 @@ impl CloudClient {
     /// - Ok(TokenVerifyResult::Invalid) - token was rejected by server (401/403)
     /// - Ok(TokenVerifyResult::NetworkError) - couldn't reach server
     pub async fn verify_token(&self, token: &str) -> Result<TokenVerifyResult> {
-        let url = format!("{}/agent/verify", self.base_url);
+        let url = format!("{}/agent/verify", self.config.api_url);
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -119,7 +141,7 @@ impl CloudClient {
             .context("Failed to load credentials")?
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
 
-        let url = format!("{}/agent/sync", self.base_url);
+        let url = format!("{}/agent/sync", self.config.api_url);
 
         let gateway_ip = scan_result.network_info.gateway_ip.as_deref();
 
@@ -181,7 +203,7 @@ impl CloudClient {
             .context("Failed to load credentials")?
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
 
-        let url = format!("{}/agent/sync", self.base_url);
+        let url = format!("{}/agent/sync", self.config.api_url);
 
         tracing::info!(
             "Uploading {} devices to cloud (network: {})",
@@ -232,7 +254,7 @@ impl CloudClient {
             .context("Failed to load credentials")?
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
         
-        let url = format!("{}/agent/network", self.base_url);
+        let url = format!("{}/agent/network", self.config.api_url);
         
         let client = reqwest::Client::new();
         let resp = client
@@ -256,7 +278,7 @@ impl CloudClient {
             .context("Failed to load credentials")?
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
         
-        let url = format!("{}/agent/health", self.base_url);
+        let url = format!("{}/agent/health", self.config.api_url);
         
         let payload = HealthCheckRequest {
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -289,9 +311,9 @@ impl CloudClient {
         let creds = crate::auth::load_credentials().await
             .context("Failed to load credentials")?
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
-        
-        // Navigate to the core app with network context
-        let url = format!("https://cartographer.network/app/network/{}", creds.network_id);
+
+        // Navigate to the core app with network context (using configurable dashboard URL)
+        let url = format!("{}/app/network/{}", self.config.dashboard_url, creds.network_id);
         webbrowser::open(&url)
             .context("Failed to open dashboard in browser")
     }

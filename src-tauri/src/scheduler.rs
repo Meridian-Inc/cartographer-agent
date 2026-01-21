@@ -278,14 +278,24 @@ async fn run_scan_and_upload(app: &AppHandle) {
             persist_state().await;
 
             // Upload to cloud if authenticated
-            if let Ok(status) = check_auth().await {
-                if status.authenticated {
+            match check_auth().await {
+                Ok(status) if status.authenticated => {
+                    tracing::debug!(
+                        "Authenticated as {}, uploading scan",
+                        status.user_email.as_deref().unwrap_or("unknown")
+                    );
                     let client = CloudClient::new();
                     if let Err(e) = client.upload_scan_result(&scan_result).await {
                         tracing::warn!("Failed to upload scan to cloud: {}", e);
                     } else {
                         tracing::info!("Scan synced to cloud");
                     }
+                }
+                Ok(_) => {
+                    tracing::debug!("Not authenticated, skipping cloud sync");
+                }
+                Err(e) => {
+                    tracing::warn!("Auth check failed during scan upload: {}", e);
                 }
             }
 
@@ -353,12 +363,18 @@ async fn run_health_checks_and_upload(app: &AppHandle) {
     persist_state().await;
 
     // Upload health results to cloud if authenticated
-    if let Ok(status) = check_auth().await {
-        if status.authenticated {
+    match check_auth().await {
+        Ok(status) if status.authenticated => {
             let client = CloudClient::new();
             if let Err(e) = client.upload_health_check(&health_results).await {
                 tracing::debug!("Failed to upload health check: {}", e);
             }
+        }
+        Ok(_) => {
+            tracing::debug!("Not authenticated, skipping health check cloud sync");
+        }
+        Err(e) => {
+            tracing::debug!("Auth check failed during health upload: {}", e);
         }
     }
 
@@ -482,8 +498,8 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
 
     // Upload health results to cloud if authenticated
     let mut synced = false;
-    if let Ok(status) = check_auth().await {
-        if status.authenticated {
+    match check_auth().await {
+        Ok(status) if status.authenticated => {
             let client = CloudClient::new();
             match client.upload_health_check(&health_results).await {
                 Ok(_) => {
@@ -494,6 +510,12 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
                     tracing::debug!("Failed to upload health check: {}", e);
                 }
             }
+        }
+        Ok(_) => {
+            tracing::debug!("Not authenticated, skipping health check cloud sync");
+        }
+        Err(e) => {
+            tracing::debug!("Auth check failed during health upload: {}", e);
         }
     }
 

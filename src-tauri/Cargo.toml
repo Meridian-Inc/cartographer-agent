@@ -1,6 +1,6 @@
 [package]
 name = "cartographer-agent"
-version = "2.4.3"
+version = "2.5.4"
 description = "Cartographer Agent - Network monitoring desktop application"
 authors = ["Cartographer Team"]
 license = ""
@@ -37,8 +37,18 @@ winreg = { version = "0.50", optional = true }
 # MAC OUI vendor lookup (uses IEEE OUI database - all registries: MA-L, MA-M, MA-S, CID, IAB)
 oui-data = "0.2"
 
+# Secure credential storage using platform keychain
+# Windows: Credential Manager, macOS: Keychain, Linux: Secret Service (GNOME Keyring/KWallet)
+keyring = { version = "3", features = ["sync-secret-service"] }
+
+# Configuration file parsing
+toml = "0.8"
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.50"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [features]
 default = ["custom-protocol"]

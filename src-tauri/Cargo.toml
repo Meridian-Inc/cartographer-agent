@@ -43,6 +43,9 @@ keyring = "3"
 # Config file parsing
 toml = "0.8"
 
+# Lazy static initialization for shared HTTP client
+once_cell = "1.19"
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.50"
 

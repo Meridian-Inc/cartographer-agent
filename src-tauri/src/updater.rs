@@ -201,22 +201,36 @@ fn emit_silent_update_notification(app_handle: &AppHandle, version: &str) {
     }
 }
 
-/// Set up a listener to emit the silent update notification when the window becomes visible
+/// Set up a listener to emit the silent update notification when the window becomes visible.
+/// Times out after 5 minutes to prevent infinite polling if user never opens the window.
 fn setup_deferred_update_notification(app_handle: AppHandle, version: String) {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::time::Instant;
 
     let notified = Arc::new(AtomicBool::new(false));
     let notified_clone = notified.clone();
 
+    // Maximum time to wait for window to become visible (5 minutes)
+    const MAX_WAIT_DURATION: Duration = Duration::from_secs(5 * 60);
+
     // Poll for window visibility since we can't easily hook into window events from here
     tauri::async_runtime::spawn(async move {
+        let start_time = Instant::now();
+
         loop {
             // Check every 500ms if the window is visible
             tokio::time::sleep(Duration::from_millis(500)).await;
 
             // Check if we've already notified
             if notified_clone.load(Ordering::SeqCst) {
+                break;
+            }
+
+            // Check if we've exceeded the maximum wait time
+            if start_time.elapsed() > MAX_WAIT_DURATION {
+                info!("Deferred update notification timed out after 5 minutes, clearing flag");
+                let _ = persistence::take_silent_update_version();
                 break;
             }
 
@@ -229,7 +243,7 @@ fn setup_deferred_update_notification(app_handle: AppHandle, version: String) {
             if window_visible {
                 // Clear the persisted flag first
                 let _ = persistence::take_silent_update_version();
-                
+
                 // Emit the notification
                 emit_silent_update_notification(&app_handle, &version);
                 notified_clone.store(true, Ordering::SeqCst);

@@ -1,9 +1,20 @@
 use crate::scanner::{Device, ScanResult};
 use anyhow::{Context, Result};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+
+/// Shared HTTP client for all API calls.
+/// Reusing a single client is more efficient as it maintains connection pools,
+/// HTTP/2 connections, and DNS caches across requests.
+static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("Failed to create HTTP client")
+});
 
 /// Default cloud API URL
 const DEFAULT_CLOUD_BASE_URL: &str = "https://cartographer.network/api";
@@ -88,9 +99,8 @@ impl CloudClient {
 
     pub async fn request_device_code(&self) -> Result<DeviceCodeResponse> {
         let url = format!("{}/agent/device-code", self.base_url);
-        
-        let client = reqwest::Client::new();
-        let resp = client
+
+        let resp = HTTP_CLIENT
             .post(&url)
             .send()
             .await
@@ -107,9 +117,8 @@ impl CloudClient {
 
     pub async fn poll_for_token(&self, device_code: &str) -> Result<Option<TokenResponse>> {
         let url = format!("{}/agent/token", self.base_url);
-        
-        let client = reqwest::Client::new();
-        let resp = client
+
+        let resp = HTTP_CLIENT
             .post(&url)
             .json(&TokenRequest {
                 device_code: device_code.to_string(),
@@ -166,12 +175,7 @@ impl CloudClient {
     pub async fn verify_token(&self, token: &str) -> Result<TokenVerifyResult> {
         let url = format!("{}/agent/verify", self.base_url);
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .context("Failed to build HTTP client")?;
-
-        let resp = match client
+        let resp = match HTTP_CLIENT
             .get(&url)
             .bearer_auth(token)
             .send()
@@ -238,8 +242,7 @@ impl CloudClient {
             }),
         };
 
-        let client = reqwest::Client::new();
-        let resp = client
+        let resp = HTTP_CLIENT
             .post(&url)
             .bearer_auth(&creds.access_token)
             .json(&payload)
@@ -292,8 +295,7 @@ impl CloudClient {
             network_info: None,
         };
 
-        let client = reqwest::Client::new();
-        let resp = client
+        let resp = HTTP_CLIENT
             .post(&url)
             .bearer_auth(&creds.access_token)
             .json(&payload)
@@ -313,14 +315,14 @@ impl CloudClient {
     }
 
     pub async fn get_network_info(&self) -> Result<NetworkInfoResponse> {
-        let creds = crate::auth::load_credentials().await
+        let creds = crate::auth::load_credentials()
+            .await
             .context("Failed to load credentials")?
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
-        
+
         let url = format!("{}/agent/network", self.base_url);
-        
-        let client = reqwest::Client::new();
-        let resp = client
+
+        let resp = HTTP_CLIENT
             .get(&url)
             .bearer_auth(&creds.access_token)
             .send()
@@ -336,24 +338,30 @@ impl CloudClient {
             .context("Failed to parse network info response")
     }
 
-    pub async fn upload_health_check(&self, results: &[crate::scheduler::DeviceHealthResult]) -> Result<()> {
-        let creds = crate::auth::load_credentials().await
+    pub async fn upload_health_check(
+        &self,
+        results: &[crate::scheduler::DeviceHealthResult],
+    ) -> Result<()> {
+        let creds = crate::auth::load_credentials()
+            .await
             .context("Failed to load credentials")?
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
-        
+
         let url = format!("{}/agent/health", self.base_url);
-        
+
         let payload = HealthCheckRequest {
             timestamp: chrono::Utc::now().to_rfc3339(),
-            results: results.iter().map(|r| HealthCheckResult {
-                ip: r.ip.clone(),
-                reachable: r.reachable,
-                response_time_ms: r.response_time_ms,
-            }).collect(),
+            results: results
+                .iter()
+                .map(|r| HealthCheckResult {
+                    ip: r.ip.clone(),
+                    reachable: r.reachable,
+                    response_time_ms: r.response_time_ms,
+                })
+                .collect(),
         };
-        
-        let client = reqwest::Client::new();
-        let resp = client
+
+        let resp = HTTP_CLIENT
             .post(&url)
             .bearer_auth(&creds.access_token)
             .json(&payload)

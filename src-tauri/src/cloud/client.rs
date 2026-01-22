@@ -2,10 +2,13 @@ use crate::scanner::{Device, ScanResult};
 use super::config::{load_cloud_config, CloudEndpointConfig};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct CloudClient {
     config: CloudEndpointConfig,
+    /// Shared HTTP client for connection pooling - avoids creating new connections per request
+    http_client: Arc<reqwest::Client>,
 }
 
 impl CloudClient {
@@ -20,12 +23,27 @@ impl CloudClient {
             config.source,
             config.api_url
         );
-        Self { config }
+        // Create a single HTTP client with connection pooling for reuse across all requests
+        let http_client = Arc::new(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .pool_max_idle_per_host(5)
+                .build()
+                .expect("Failed to create HTTP client")
+        );
+        Self { config, http_client }
     }
 
     /// Create a CloudClient with a custom configuration
     pub fn with_config(config: CloudEndpointConfig) -> Self {
-        Self { config }
+        let http_client = Arc::new(
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .pool_max_idle_per_host(5)
+                .build()
+                .expect("Failed to create HTTP client")
+        );
+        Self { config, http_client }
     }
 
     /// Get the base API URL
@@ -40,9 +58,8 @@ impl CloudClient {
 
     pub async fn request_device_code(&self) -> Result<DeviceCodeResponse> {
         let url = format!("{}/agent/device-code", self.config.api_url);
-        
-        let client = reqwest::Client::new();
-        let resp = client
+
+        let resp = self.http_client
             .post(&url)
             .send()
             .await
@@ -59,9 +76,8 @@ impl CloudClient {
 
     pub async fn poll_for_token(&self, device_code: &str) -> Result<Option<TokenResponse>> {
         let url = format!("{}/agent/token", self.config.api_url);
-        
-        let client = reqwest::Client::new();
-        let resp = client
+
+        let resp = self.http_client
             .post(&url)
             .json(&TokenRequest {
                 device_code: device_code.to_string(),
@@ -103,14 +119,11 @@ impl CloudClient {
     pub async fn verify_token(&self, token: &str) -> Result<TokenVerifyResult> {
         let url = format!("{}/agent/verify", self.config.api_url);
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .context("Failed to build HTTP client")?;
-
-        let resp = match client
+        // Use shorter timeout for verification requests
+        let resp = match self.http_client
             .get(&url)
             .bearer_auth(token)
+            .timeout(std::time::Duration::from_secs(10))
             .send()
             .await
         {
@@ -175,8 +188,7 @@ impl CloudClient {
             }),
         };
 
-        let client = reqwest::Client::new();
-        let resp = client
+        let resp = self.http_client
             .post(&url)
             .bearer_auth(&creds.access_token)
             .json(&payload)
@@ -229,8 +241,7 @@ impl CloudClient {
             network_info: None,
         };
 
-        let client = reqwest::Client::new();
-        let resp = client
+        let resp = self.http_client
             .post(&url)
             .bearer_auth(&creds.access_token)
             .json(&payload)
@@ -253,11 +264,10 @@ impl CloudClient {
         let creds = crate::auth::load_credentials().await
             .context("Failed to load credentials")?
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
-        
+
         let url = format!("{}/agent/network", self.config.api_url);
-        
-        let client = reqwest::Client::new();
-        let resp = client
+
+        let resp = self.http_client
             .get(&url)
             .bearer_auth(&creds.access_token)
             .send()
@@ -277,9 +287,9 @@ impl CloudClient {
         let creds = crate::auth::load_credentials().await
             .context("Failed to load credentials")?
             .ok_or_else(|| anyhow::anyhow!("Not authenticated"))?;
-        
+
         let url = format!("{}/agent/health", self.config.api_url);
-        
+
         let payload = HealthCheckRequest {
             timestamp: chrono::Utc::now().to_rfc3339(),
             results: results.iter().map(|r| HealthCheckResult {
@@ -288,9 +298,8 @@ impl CloudClient {
                 response_time_ms: r.response_time_ms,
             }).collect(),
         };
-        
-        let client = reqwest::Client::new();
-        let resp = client
+
+        let resp = self.http_client
             .post(&url)
             .bearer_auth(&creds.access_token)
             .json(&payload)

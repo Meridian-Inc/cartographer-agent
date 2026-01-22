@@ -5,10 +5,11 @@ use crate::persistence;
 use crate::scanner::{check_device_reachable, get_arp_table_ips, scan_network_with_progress, Device, ScanProgress};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
+use tokio_util::sync::CancellationToken;
 
 /// Event name for health check progress updates
 pub const HEALTH_CHECK_PROGRESS_EVENT: &str = "health-check-progress";
@@ -58,6 +59,20 @@ static LAST_SCAN_TIME: AtomicU64 = AtomicU64::new(0);
 
 // Global AppHandle for starting background tasks from anywhere
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+
+// Cancellation token for stopping background tasks on logout
+static BACKGROUND_CANCEL_TOKEN: OnceLock<Mutex<Option<CancellationToken>>> = OnceLock::new();
+
+// Shared CloudClient for all background tasks (avoids creating new HTTP clients)
+static SHARED_CLOUD_CLIENT: OnceLock<Arc<CloudClient>> = OnceLock::new();
+
+fn get_cancel_token_store() -> &'static Mutex<Option<CancellationToken>> {
+    BACKGROUND_CANCEL_TOKEN.get_or_init(|| Mutex::const_new(None))
+}
+
+fn get_shared_cloud_client() -> Arc<CloudClient> {
+    SHARED_CLOUD_CLIENT.get_or_init(|| Arc::new(CloudClient::new())).clone()
+}
 
 pub fn init(app: AppHandle) {
     APP_HANDLE.set(app).ok();
@@ -228,6 +243,18 @@ pub fn is_busy() -> bool {
     is_scanning() || is_health_checking()
 }
 
+/// Stop all background scanning tasks.
+/// Call this on logout to prevent memory leaks from orphaned tasks.
+pub async fn stop_background_scanning() {
+    let mut token_guard = get_cancel_token_store().lock().await;
+    if let Some(token) = token_guard.take() {
+        tracing::info!("Stopping background scanning tasks");
+        token.cancel();
+        // Reset the running flag so tasks can be restarted on next login
+        BACKGROUND_RUNNING.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Request cancellation of the current scan
 pub fn request_scan_cancel() {
     SCAN_CANCEL_REQUESTED.store(true, Ordering::SeqCst);
@@ -284,7 +311,7 @@ async fn run_scan_and_upload(app: &AppHandle) {
                         "Authenticated as {}, uploading scan",
                         status.user_email.as_deref().unwrap_or("unknown")
                     );
-                    let client = CloudClient::new();
+                    let client = get_shared_cloud_client();
                     if let Err(e) = client.upload_scan_result(&scan_result).await {
                         tracing::warn!("Failed to upload scan to cloud: {}", e);
                     } else {
@@ -365,7 +392,7 @@ async fn run_health_checks_and_upload(app: &AppHandle) {
     // Upload health results to cloud if authenticated
     match check_auth().await {
         Ok(status) if status.authenticated => {
-            let client = CloudClient::new();
+            let client = get_shared_cloud_client();
             if let Err(e) = client.upload_health_check(&health_results).await {
                 tracing::debug!("Failed to upload health check: {}", e);
             }
@@ -500,7 +527,7 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
     let mut synced = false;
     match check_auth().await {
         Ok(status) if status.authenticated => {
-            let client = CloudClient::new();
+            let client = get_shared_cloud_client();
             match client.upload_health_check(&health_results).await {
                 Ok(_) => {
                     tracing::debug!("Health check results synced to cloud");
@@ -566,7 +593,15 @@ pub async fn start_background_scanning(app: AppHandle) {
 
     tracing::info!("Starting background scanning");
 
+    // Create a cancellation token for graceful shutdown
+    let cancel_token = CancellationToken::new();
+    {
+        let mut token_guard = get_cancel_token_store().lock().await;
+        *token_guard = Some(cancel_token.clone());
+    }
+
     let app_scan = app.clone();
+    let scan_cancel_token = cancel_token.clone();
 
     // Spawn background scan task
     tokio::spawn(async move {
@@ -580,26 +615,39 @@ pub async fn start_background_scanning(app: AppHandle) {
         scan_timer.tick().await;
 
         loop {
-            scan_timer.tick().await;
+            tokio::select! {
+                _ = scan_cancel_token.cancelled() => {
+                    tracing::info!("Background scan task cancelled");
+                    break;
+                }
+                _ = scan_timer.tick() => {
+                    // Check if interval changed
+                    let current_interval = SCAN_INTERVAL.load(Ordering::Relaxed);
+                    if current_interval != last_interval {
+                        last_interval = current_interval;
+                        scan_timer = interval(Duration::from_secs(current_interval));
+                        scan_timer.tick().await; // Skip immediate tick
+                        continue;
+                    }
 
-            // Check if interval changed
-            let current_interval = SCAN_INTERVAL.load(Ordering::Relaxed);
-            if current_interval != last_interval {
-                last_interval = current_interval;
-                scan_timer = interval(Duration::from_secs(current_interval));
-                scan_timer.tick().await; // Skip immediate tick
-                continue;
+                    run_scan_and_upload(&app_scan).await;
+                }
             }
-
-            run_scan_and_upload(&app_scan).await;
         }
     });
 
     // Spawn background health check task
     let app_health = app.clone();
+    let health_cancel_token = cancel_token.clone();
     tokio::spawn(async move {
         // Wait for initial scan to complete before starting health checks
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::select! {
+            _ = health_cancel_token.cancelled() => {
+                tracing::info!("Background health check task cancelled during initial wait");
+                return;
+            }
+            _ = tokio::time::sleep(Duration::from_secs(10)) => {}
+        }
 
         let mut last_interval = HEALTH_CHECK_INTERVAL.load(Ordering::Relaxed);
         let mut health_timer = interval(Duration::from_secs(last_interval));
@@ -607,18 +655,24 @@ pub async fn start_background_scanning(app: AppHandle) {
         health_timer.tick().await;
 
         loop {
-            health_timer.tick().await;
+            tokio::select! {
+                _ = health_cancel_token.cancelled() => {
+                    tracing::info!("Background health check task cancelled");
+                    break;
+                }
+                _ = health_timer.tick() => {
+                    // Check if interval changed
+                    let current_interval = HEALTH_CHECK_INTERVAL.load(Ordering::Relaxed);
+                    if current_interval != last_interval {
+                        last_interval = current_interval;
+                        health_timer = interval(Duration::from_secs(current_interval));
+                        health_timer.tick().await; // Skip immediate tick
+                        continue;
+                    }
 
-            // Check if interval changed
-            let current_interval = HEALTH_CHECK_INTERVAL.load(Ordering::Relaxed);
-            if current_interval != last_interval {
-                last_interval = current_interval;
-                health_timer = interval(Duration::from_secs(current_interval));
-                health_timer.tick().await; // Skip immediate tick
-                continue;
+                    run_health_checks_with_progress(&app_health).await;
+                }
             }
-
-            run_health_checks_with_progress(&app_health).await;
         }
     });
 }

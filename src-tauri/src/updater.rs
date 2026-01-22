@@ -201,7 +201,8 @@ fn emit_silent_update_notification(app_handle: &AppHandle, version: &str) {
     }
 }
 
-/// Set up a listener to emit the silent update notification when the window becomes visible
+/// Set up a listener to emit the silent update notification when the window becomes visible.
+/// Times out after 24 hours to prevent memory leaks from long-running tasks.
 fn setup_deferred_update_notification(app_handle: AppHandle, version: String) {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -209,14 +210,26 @@ fn setup_deferred_update_notification(app_handle: AppHandle, version: String) {
     let notified = Arc::new(AtomicBool::new(false));
     let notified_clone = notified.clone();
 
+    // Maximum time to wait for window visibility (24 hours)
+    const MAX_WAIT_DURATION: Duration = Duration::from_secs(24 * 60 * 60);
+
     // Poll for window visibility since we can't easily hook into window events from here
     tauri::async_runtime::spawn(async move {
+        let start_time = std::time::Instant::now();
+
         loop {
             // Check every 500ms if the window is visible
             tokio::time::sleep(Duration::from_millis(500)).await;
 
             // Check if we've already notified
             if notified_clone.load(Ordering::SeqCst) {
+                break;
+            }
+
+            // Timeout after MAX_WAIT_DURATION to prevent indefinite polling
+            if start_time.elapsed() > MAX_WAIT_DURATION {
+                warn!("Deferred update notification timed out after 24 hours, clearing flag");
+                let _ = persistence::take_silent_update_version();
                 break;
             }
 
@@ -229,7 +242,7 @@ fn setup_deferred_update_notification(app_handle: AppHandle, version: String) {
             if window_visible {
                 // Clear the persisted flag first
                 let _ = persistence::take_silent_update_version();
-                
+
                 // Emit the notification
                 emit_silent_update_notification(&app_handle, &version);
                 notified_clone.store(true, Ordering::SeqCst);

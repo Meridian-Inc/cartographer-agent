@@ -2,7 +2,7 @@ use crate::auth::check_auth;
 use crate::cloud::CloudClient;
 use crate::commands::SCAN_PROGRESS_EVENT;
 use crate::persistence;
-use crate::scanner::{check_device_reachable, get_arp_table_ips, scan_network_with_progress, Device, ScanProgress};
+use crate::scanner::{ping_device, scan_network_with_progress, Device, ScanProgress};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -157,20 +157,24 @@ pub async fn update_known_devices(devices: Vec<Device>) {
 /// For devices that exist in both lists:
 /// - If the new device has no response_time_ms, preserve the old one
 /// - If the new device has response_time_ms, use the new value
-/// New devices are added, old devices not in the new list are removed.
+/// Devices not found in the new scan are kept but marked as offline (response_time_ms = None).
 pub async fn merge_devices_preserving_health(new_devices: Vec<Device>) {
     let mut known = KNOWN_DEVICES.lock().await;
-    
+
     // Create a map of IP -> old device for quick lookup
-    let old_device_map: std::collections::HashMap<String, &Device> = 
-        known.iter().map(|d| (d.ip.clone(), d)).collect();
-    
+    let old_device_map: std::collections::HashMap<String, Device> =
+        known.iter().map(|d| (d.ip.clone(), d.clone())).collect();
+
+    // Track which old devices are found in the new scan
+    let new_device_ips: std::collections::HashSet<String> =
+        new_devices.iter().map(|d| d.ip.clone()).collect();
+
     // Merge: for each new device, preserve old health data if new doesn't have it
-    let merged: Vec<Device> = new_devices
+    let mut merged: Vec<Device> = new_devices
         .into_iter()
         .map(|mut new_device| {
             if let Some(old_device) = old_device_map.get(&new_device.ip) {
-                // If new device has no response time data (or is 0 from ARP), 
+                // If new device has no response time data (or is 0 from ARP),
                 // preserve old health data
                 if new_device.response_time_ms.is_none() || new_device.response_time_ms == Some(0.0) {
                     if old_device.response_time_ms.is_some() {
@@ -185,7 +189,27 @@ pub async fn merge_devices_preserving_health(new_devices: Vec<Device>) {
             new_device
         })
         .collect();
-    
+
+    // Add old devices that weren't found in the new scan, marking them as offline
+    for old_device in old_device_map.values() {
+        if !new_device_ips.contains(&old_device.ip) {
+            tracing::info!(
+                "Device {} not found in scan, marking as offline",
+                old_device.ip
+            );
+            // Keep the device but mark as offline (response_time_ms = None)
+            let offline_device = Device {
+                ip: old_device.ip.clone(),
+                mac: old_device.mac.clone(),
+                response_time_ms: None, // Mark as offline
+                hostname: old_device.hostname.clone(),
+                vendor: old_device.vendor.clone(),
+                device_type: old_device.device_type.clone(),
+            };
+            merged.push(offline_device);
+        }
+    }
+
     *known = merged;
 }
 
@@ -360,16 +384,11 @@ async fn run_health_checks_and_upload(app: &AppHandle) {
 
     tracing::debug!("Running health checks on {} devices", devices.len());
 
-    // Get current ARP table for fallback checking
-    // This helps detect devices that block ICMP but are still on the network
-    let arp_ips = get_arp_table_ips().await;
-    tracing::debug!("ARP table has {} entries for fallback", arp_ips.len());
-
-    // Check all known devices using ping with ARP fallback
-    // Update devices in-place to ensure response_time_ms is updated
+    // Check all known devices using ping only (no ARP fallback)
+    // ARP cache can be stale, so we rely solely on ICMP ping for accurate health status
     let mut health_results = Vec::new();
     for device in &mut devices {
-        let result = check_device_reachable(&device.ip, &arp_ips).await;
+        let result = ping_device(&device.ip).await;
         let reachable = result.is_ok();
         let response_time = if reachable { result.ok() } else { None };
         
@@ -464,16 +483,13 @@ async fn run_health_checks_with_progress(app: &AppHandle) {
         },
     );
 
-    // Get current ARP table for fallback checking
-    let arp_ips = get_arp_table_ips().await;
-
-    // Check all known devices using ping with ARP fallback
-    // Update devices in-place to ensure response_time_ms is updated
+    // Check all known devices using ping only (no ARP fallback)
+    // ARP cache can be stale, so we rely solely on ICMP ping for accurate health status
     let mut health_results = Vec::new();
     let mut healthy_count = 0;
 
     for (i, device) in devices.iter_mut().enumerate() {
-        let result = check_device_reachable(&device.ip, &arp_ips).await;
+        let result = ping_device(&device.ip).await;
         let reachable = result.is_ok();
         let response_time = if reachable { result.ok() } else { None };
 

@@ -237,9 +237,46 @@ jobs:
           echo "=== Signed artifacts uploaded ==="
         shell: bash
 
+  # Build CLI for Linux x86_64
+  build-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build CLI
+        working-directory: src-tauri
+        run: cargo build --release --package cartographer-cli
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Package CLI
+        run: |
+          cd src-tauri/target/release
+          tar -czvf cartographer-cli-${{ steps.version.outputs.VERSION }}-linux-x86_64.tar.gz cartographer
+          sha256sum cartographer-cli-${{ steps.version.outputs.VERSION }}-linux-x86_64.tar.gz > cartographer-cli-${{ steps.version.outputs.VERSION }}-linux-x86_64.tar.gz.sha256
+
+      - name: Upload CLI to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            src-tauri/target/release/cartographer-cli-${{ steps.version.outputs.VERSION }}-linux-x86_64.tar.gz \
+            src-tauri/target/release/cartographer-cli-${{ steps.version.outputs.VERSION }}-linux-x86_64.tar.gz.sha256
+
   # Finalize release with changelog
   finalize-release:
-    needs: build
+    needs: [build, build-cli]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

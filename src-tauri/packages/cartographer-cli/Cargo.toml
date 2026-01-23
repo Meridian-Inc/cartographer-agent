@@ -1,6 +1,6 @@
 [package]
 name = "cartographer-cli"
-version = "2.8.6"
+version = "2.8.7"
 description = "Cartographer CLI - Lightweight network monitoring agent for Linux servers"
 authors = ["Meridian Inc"]
 license = ""

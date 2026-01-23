@@ -1,0 +1,42 @@
+[package]
+name = "cartographer-cli"
+version = "2.6.0"
+description = "Cartographer CLI - Lightweight network monitoring agent for Linux servers"
+authors = ["Meridian Inc"]
+license = ""
+repository = ""
+edition = "2024"
+
+[[bin]]
+name = "cartographer"
+path = "src/main.rs"
+
+[dependencies]
+# Core library with file-based storage (no keyring for headless servers)
+cartographer-core = { path = "../cartographer-core", default-features = false, features = ["file-storage", "browser"] }
+
+# CLI argument parsing
+clap = { version = "4.4", features = ["derive"] }
+
+# Async runtime
+tokio = { version = "1.35", features = ["full", "signal"] }
+
+# Serialization for JSON output
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time utilities
+chrono = { version = "0.4", features = ["serde"] }
+
+# Directories for config/data storage
+dirs = "5.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

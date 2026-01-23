@@ -1,0 +1,54 @@
+[package]
+name = "cartographer-core"
+version = "2.6.0"
+description = "Cartographer core library - shared network scanning and cloud sync functionality"
+authors = ["Meridian Inc"]
+license = ""
+repository = ""
+edition = "2024"
+
+[dependencies]
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+futures = "0.3"
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json"] }
+
+# Utilities
+dirs = "5.0"
+chrono = { version = "0.4", features = ["serde"] }
+ipnetwork = "0.20"
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+
+# MAC OUI vendor lookup
+oui-data = "0.2"
+
+# Secure credential storage
+# For GUI: uses platform keychain
+# For CLI on headless Linux: falls back to file-based storage
+keyring = { version = "3", features = ["sync-secret-service"], optional = true }
+
+# Configuration file parsing
+toml = "0.8"
+
+# Browser opening for device flow auth
+webbrowser = { version = "0.8", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[features]
+default = ["keyring-storage", "browser"]
+# Enable keyring-based credential storage (requires libsecret on Linux)
+keyring-storage = ["keyring"]
+# Enable automatic browser opening for OAuth device flow
+browser = ["webbrowser"]
+# File-only credential storage (no keyring dependency, for headless Linux)
+file-storage = []

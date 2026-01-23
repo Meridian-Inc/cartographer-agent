@@ -1,0 +1,45 @@
+[Unit]
+Description=Cartographer Network Monitoring Agent
+Documentation=https://cartographer.network/docs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cartographer daemon --foreground --interval 5
+Restart=on-failure
+RestartSec=30
+
+# Run as root to ensure ping capabilities
+# Alternatively, set CAP_NET_RAW capability on the binary:
+#   sudo setcap cap_net_raw+ep /usr/local/bin/cartographer
+# Then uncomment the following to run as a dedicated user:
+# User=cartographer
+# Group=cartographer
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Allow read/write to config directory
+ReadWritePaths=/root/.config/cartographer
+
+# Required capabilities for ICMP ping
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
+
+# Network access required
+PrivateNetwork=false
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cartographer
+
+[Install]
+WantedBy=multi-user.target

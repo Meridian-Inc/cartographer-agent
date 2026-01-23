@@ -1,11 +1,17 @@
+[workspace]
+members = [
+    "packages/cartographer-core",
+    "packages/cartographer-cli",
+]
+
 [package]
 name = "cartographer-agent"
 version = "2.6.0"
 description = "Cartographer Agent - Network monitoring desktop application"
-authors = ["Cartographer Team"]
+authors = ["Meridian Inc"]
 license = ""
 repository = ""
-edition = "2021"
+edition = "2024"
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
@@ -44,6 +50,9 @@ keyring = { version = "3", features = ["sync-secret-service"] }
 
 # Configuration file parsing
 toml = "0.8"
+
+# Use cartographer-core as a dependency
+cartographer-core = { path = "packages/cartographer-core" }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.50"

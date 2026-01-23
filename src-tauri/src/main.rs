@@ -1,6 +1,18 @@
 // Prevents additional console window on Windows in release mode
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+//! Cartographer Desktop Agent
+//!
+//! This is the GUI desktop agent built with Tauri. It uses local implementations
+//! of auth, cloud, and scanner modules that are integrated with Tauri's event system.
+//!
+//! For the lightweight CLI-only agent (used on headless Linux servers), see
+//! `packages/cartographer-cli` which uses `packages/cartographer-core` for
+//! shared functionality without any GUI dependencies.
+//!
+//! The core library (`cartographer-core`) can be used here for shared types
+//! when needed, but the main functionality uses local Tauri-integrated modules.
+
 mod auth;
 mod cli;
 mod cloud;
@@ -11,6 +23,11 @@ mod scanner;
 mod scheduler;
 mod tray;
 mod updater;
+
+// Re-export core types for compatibility with CLI
+// These can be used when sharing data structures between desktop and CLI agents
+#[allow(unused_imports)]
+use cartographer_core as core;
 
 use tauri::Manager;
 use tracing::info;

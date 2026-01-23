@@ -143,10 +143,7 @@ async fn cmd_connect(cli: &Cli) -> Result<()> {
     match cli.format {
         OutputFormat::Text => {
             println!();
-            println!("  Visit: {}", login_info.verification_url);
-            println!("  Code:  {}", login_info.user_code);
-            println!();
-            println!("Waiting for authorization (expires in {} seconds)...", login_info.expires_in);
+            println!("Please visit the following URL to authorize:\n\n{}\n\n", login_info.verification_url);
         }
         OutputFormat::Json => {
             println!("{}", serde_json::json!({
@@ -174,8 +171,7 @@ async fn cmd_connect(cli: &Cli) -> Result<()> {
                 status.user_email.unwrap_or_default()
             );
             println!();
-            println!("You can now run scans with: cartographer scan --upload");
-            println!("Or start the daemon with:   cartographer daemon");
+            println!("You can now run manual scans with: cartographer scan --upload");
         }
         OutputFormat::Json => {
             println!("{}", serde_json::json!({

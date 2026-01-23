@@ -239,6 +239,7 @@ jobs:
 
   # Build CLI for Linux x86_64
   build-cli:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

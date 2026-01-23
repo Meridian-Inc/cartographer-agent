@@ -35,6 +35,14 @@
       "updater": "src-tauri/cargo-version-updater.cjs"
     },
     {
+      "filename": "src-tauri/packages/cartographer-cli/Cargo.toml",
+      "updater": "src-tauri/cargo-version-updater.cjs"
+    },
+    {
+      "filename": "src-tauri/packages/cartographer-core/Cargo.toml",
+      "updater": "src-tauri/cargo-version-updater.cjs"
+    },
+    {
       "filename": "VERSION",
       "type": "plain-text"
     }

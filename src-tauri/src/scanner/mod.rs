@@ -4,8 +4,10 @@ pub mod oui;
 pub mod privileges;
 
 use anyhow::{Context, Result};
+use ipnetwork::IpNetwork;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::process::Command;
 use std::time::Instant;
 
@@ -137,6 +139,60 @@ fn deduplicate_devices_by_ip(devices: Vec<Device>) -> Vec<Device> {
     }
 
     by_ip.into_values().collect()
+}
+
+/// Filter devices to the detected subnet to avoid syncing neighbors from
+/// unrelated interfaces (VPN, containers, virtual adapters, etc.).
+fn filter_devices_to_subnet(devices: Vec<Device>, network_info: &NetworkInfo) -> Vec<Device> {
+    let subnet: IpNetwork = match network_info.subnet.parse() {
+        Ok(subnet) => subnet,
+        Err(e) => {
+            tracing::warn!(
+                "Skipping subnet filtering, failed to parse subnet '{}': {}",
+                network_info.subnet,
+                e
+            );
+            return devices;
+        }
+    };
+
+    // Guard against bad fallback network detection data before filtering.
+    if let Some(local_ip) = network_info.local_ip.as_deref() {
+        if let Ok(local_ip) = local_ip.parse::<IpAddr>() {
+            if !subnet.contains(local_ip) {
+                tracing::warn!(
+                    "Skipping subnet filtering: local IP {} is not in detected subnet {}",
+                    local_ip,
+                    subnet
+                );
+                return devices;
+            }
+        }
+    }
+
+    let total_before = devices.len();
+    let filtered: Vec<Device> = devices
+        .into_iter()
+        .filter(|device| {
+            device
+                .ip
+                .parse::<IpAddr>()
+                .map(|ip| subnet.contains(ip))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if filtered.len() < total_before {
+        tracing::info!(
+            "Filtered {} out-of-subnet devices before sync (kept {}/{} in {})",
+            total_before - filtered.len(),
+            filtered.len(),
+            total_before,
+            subnet
+        );
+    }
+
+    filtered
 }
 
 /// Enrich devices with vendor information from MAC OUI lookup.
@@ -442,6 +498,8 @@ pub async fn scan_network_with_progress(
 
     // Deduplicate devices by IP address (in case of duplicates from ARP or ping)
     let mut devices = deduplicate_devices_by_ip(devices);
+    // Keep only devices in the active subnet to avoid cross-interface noise.
+    devices = filter_devices_to_subnet(devices, &network_info);
 
     // Enrich devices with vendor information from MAC OUI lookup
     enrich_devices_with_vendor(&mut devices);

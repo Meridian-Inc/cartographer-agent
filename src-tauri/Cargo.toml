@@ -6,7 +6,7 @@ members = [
 
 [package]
 name = "cartographer-agent"
-version = "2.9.3"
+version = "2.9.4"
 description = "Cartographer Agent - Network monitoring desktop application"
 authors = ["Meridian Inc"]
 license = ""

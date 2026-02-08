@@ -67,10 +67,10 @@ function sendEvent(event, properties = {}, options = {}) {
     typeof globalThis !== "undefined" &&
     typeof globalThis.navigator !== "undefined" &&
     typeof globalThis.navigator.sendBeacon === "function" &&
-    typeof Blob === "function"
+    typeof globalThis.Blob === "function"
   ) {
     try {
-      const blob = new Blob([payload], { type: "application/json" });
+      const blob = new globalThis.Blob([payload], { type: "application/json" });
       globalThis.navigator.sendBeacon(endpoint, blob);
       return;
     } catch {

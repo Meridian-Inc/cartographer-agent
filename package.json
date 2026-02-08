@@ -28,7 +28,7 @@
     "@tauri-apps/plugin-shell": "^2.0.0",
     "@tauri-apps/plugin-updater": "^2.9.0",
     "pinia": "^2.1.7",
-    "posthog-js": "^1.248.0",
+    "posthog-js": "file:vendor/posthog-js",
     "vue": "^3.4.15",
     "vue-router": "^4.2.5"
   },

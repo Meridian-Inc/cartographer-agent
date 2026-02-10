@@ -30,9 +30,10 @@
           <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
             What's New:
           </h3>
-          <div class="text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 p-3 rounded max-h-40 overflow-y-auto">
-            <pre class="whitespace-pre-wrap font-sans">{{ releaseNotes }}</pre>
-          </div>
+          <div
+            class="changelog-content text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 p-3 rounded max-h-40 overflow-y-auto overflow-x-hidden"
+            v-html="renderedNotes"
+          ></div>
         </div>
 
         <div v-if="isDownloading || isInstalling" class="mb-4">
@@ -74,7 +75,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { marked } from 'marked'
 import { useUpdater } from '@/composables/useUpdater'
 import { getVersion } from '@tauri-apps/api/app'
 
@@ -91,6 +93,11 @@ const {
 } = useUpdater()
 
 const currentVersion = ref('')
+
+const renderedNotes = computed(() => {
+  if (!releaseNotes.value) return ''
+  return marked.parse(releaseNotes.value, { async: false }) as string
+})
 
 onMounted(async () => {
   try {
@@ -110,3 +117,54 @@ async function handleUpdate() {
   }
 }
 </script>
+
+<style scoped>
+.changelog-content :deep(h1),
+.changelog-content :deep(h2),
+.changelog-content :deep(h3) {
+  font-weight: 600;
+  margin-top: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.changelog-content :deep(h1) {
+  font-size: 1rem;
+}
+
+.changelog-content :deep(h2) {
+  font-size: 0.9rem;
+}
+
+.changelog-content :deep(h3) {
+  font-size: 0.85rem;
+}
+
+.changelog-content :deep(ul) {
+  list-style-type: disc;
+  padding-left: 1.25rem;
+  margin: 0.25rem 0;
+}
+
+.changelog-content :deep(li) {
+  margin-bottom: 0.125rem;
+}
+
+.changelog-content :deep(a) {
+  color: #3b82f6;
+  text-decoration: underline;
+  overflow-wrap: break-word;
+  word-break: break-all;
+}
+
+.changelog-content :deep(p) {
+  margin: 0.25rem 0;
+  overflow-wrap: break-word;
+}
+
+.changelog-content :deep(code) {
+  font-size: 0.8rem;
+  background: rgba(0, 0, 0, 0.1);
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.2rem;
+}
+</style>

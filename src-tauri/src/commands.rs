@@ -6,8 +6,8 @@ use crate::scanner::{
 use crate::scheduler::{
     clear_scan_cancel, ensure_background_scanning, get_known_devices, get_last_scan_time,
     is_scanning, merge_devices_preserving_health, persist_state, record_scan_time, request_scan_cancel,
-    set_scan_interval as scheduler_set_scan_interval, stop_background_scanning, trigger_immediate_scan,
-    update_known_devices, DeviceHealthResult,
+    reset_scan_state, set_scan_interval as scheduler_set_scan_interval, stop_background_scanning,
+    trigger_immediate_scan, update_known_devices, DeviceHealthResult,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -163,6 +163,9 @@ pub async fn logout() -> Result<(), String> {
 
     // Clear in-memory devices
     update_known_devices(Vec::new()).await;
+
+    // Reset scan state (last scan time, scanning flags) so reconnecting starts fresh
+    reset_scan_state();
 
     // Clear persisted state (devices, scan time, etc.)
     crate::persistence::clear_state().map_err(|e| e.to_string())?;

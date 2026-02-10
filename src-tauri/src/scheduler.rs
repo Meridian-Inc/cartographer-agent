@@ -153,51 +153,127 @@ pub async fn update_known_devices(devices: Vec<Device>) {
     *known = devices;
 }
 
+/// Normalize a MAC address to lowercase colon-separated format (e.g. "aa:bb:cc:dd:ee:ff").
+fn normalize_mac(mac: &str) -> String {
+    let hex: String = mac
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .collect::<String>()
+        .to_lowercase();
+    hex.as_bytes()
+        .chunks(2)
+        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
+        .collect::<Vec<&str>>()
+        .join(":")
+}
+
 /// Merge new devices with existing ones, preserving health data from previous health checks.
-/// For devices that exist in both lists:
+/// Uses dual-key matching (IP first, then MAC) to correctly identify devices even when
+/// IP or MAC changes (DHCP churn, NIC replacement, etc.).
 /// - If the new device has no response_time_ms, preserve the old one
 /// - If the new device has response_time_ms, use the new value
-/// Devices not found in the new scan are kept but marked as offline (response_time_ms = None).
+/// - If IP match found but MAC differs, update the MAC
+/// - If no IP match but MAC matches, treat as same device with IP change
+/// Devices not matched by either key are kept but marked as offline (response_time_ms = None).
 pub async fn merge_devices_preserving_health(new_devices: Vec<Device>) {
     let mut known = KNOWN_DEVICES.lock().await;
 
-    // Create a map of IP -> old device for quick lookup
+    // Create maps for dual-key lookup
     let old_device_map: std::collections::HashMap<String, Device> =
         known.iter().map(|d| (d.ip.clone(), d.clone())).collect();
 
-    // Track which old devices are found in the new scan
-    let new_device_ips: std::collections::HashSet<String> =
-        new_devices.iter().map(|d| d.ip.clone()).collect();
+    let old_device_map_by_mac: std::collections::HashMap<String, Device> = known
+        .iter()
+        .filter_map(|d| {
+            d.mac
+                .as_ref()
+                .map(|m| (normalize_mac(m), d.clone()))
+        })
+        .collect();
 
-    // Merge: for each new device, preserve old health data if new doesn't have it
+    // Track which old device IPs were matched (by either IP or MAC)
+    let mut matched_old_ips: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+
+    // Merge: for each new device, try IP match first, then MAC match
     let mut merged: Vec<Device> = new_devices
         .into_iter()
         .map(|mut new_device| {
+            // Try IP match first
             if let Some(old_device) = old_device_map.get(&new_device.ip) {
-                // If new device has no response time data (or is 0 from ARP),
-                // preserve old health data
-                if new_device.response_time_ms.is_none() || new_device.response_time_ms == Some(0.0) {
+                matched_old_ips.insert(old_device.ip.clone());
+
+                // Preserve health data if new device doesn't have it
+                if new_device.response_time_ms.is_none()
+                    || new_device.response_time_ms == Some(0.0)
+                {
                     if old_device.response_time_ms.is_some() {
                         new_device.response_time_ms = old_device.response_time_ms;
                     }
                 }
-                // Also preserve hostname if new doesn't have one
+                // Preserve hostname if new doesn't have one
                 if new_device.hostname.is_none() && old_device.hostname.is_some() {
                     new_device.hostname = old_device.hostname.clone();
+                }
+
+                // Update MAC if it changed (e.g. NIC replacement)
+                if let Some(ref new_mac) = new_device.mac {
+                    let new_mac_norm = normalize_mac(new_mac);
+                    let old_mac_norm = old_device.mac.as_ref().map(|m| normalize_mac(m));
+                    if old_mac_norm.as_deref() != Some(&new_mac_norm) {
+                        tracing::info!(
+                            "Device {} MAC changed from {:?} to {}",
+                            new_device.ip,
+                            old_device.mac,
+                            new_mac
+                        );
+                    }
+                }
+            } else if let Some(ref new_mac) = new_device.mac {
+                // No IP match — try MAC match (DHCP churn: same device, new IP)
+                let new_mac_norm = normalize_mac(new_mac);
+                if let Some(old_device) = old_device_map_by_mac.get(&new_mac_norm) {
+                    matched_old_ips.insert(old_device.ip.clone());
+                    tracing::info!(
+                        "Device MAC {} moved from IP {} to {}",
+                        new_mac,
+                        old_device.ip,
+                        new_device.ip
+                    );
+
+                    // Preserve health data
+                    if new_device.response_time_ms.is_none()
+                        || new_device.response_time_ms == Some(0.0)
+                    {
+                        if old_device.response_time_ms.is_some() {
+                            new_device.response_time_ms = old_device.response_time_ms;
+                        }
+                    }
+                    // Preserve hostname if new doesn't have one
+                    if new_device.hostname.is_none() && old_device.hostname.is_some() {
+                        new_device.hostname = old_device.hostname.clone();
+                    }
+                    // Preserve vendor if new doesn't have one
+                    if new_device.vendor.is_none() && old_device.vendor.is_some() {
+                        new_device.vendor = old_device.vendor.clone();
+                    }
+                    // Preserve device_type if new doesn't have one
+                    if new_device.device_type.is_none() && old_device.device_type.is_some() {
+                        new_device.device_type = old_device.device_type.clone();
+                    }
                 }
             }
             new_device
         })
         .collect();
 
-    // Add old devices that weren't found in the new scan, marking them as offline
+    // Add old devices that weren't matched by either IP or MAC, marking them as offline
     for old_device in old_device_map.values() {
-        if !new_device_ips.contains(&old_device.ip) {
+        if !matched_old_ips.contains(&old_device.ip) {
             tracing::info!(
                 "Device {} not found in scan, marking as offline",
                 old_device.ip
             );
-            // Keep the device but mark as offline (response_time_ms = None)
             let offline_device = Device {
                 ip: old_device.ip.clone(),
                 mac: old_device.mac.clone(),
@@ -277,6 +353,16 @@ pub async fn stop_background_scanning() {
         // Reset the running flag so tasks can be restarted on next login
         BACKGROUND_RUNNING.store(false, Ordering::SeqCst);
     }
+}
+
+/// Reset all scan-related state to defaults.
+/// Called during logout to ensure a clean slate when signing back in.
+pub fn reset_scan_state() {
+    LAST_SCAN_TIME.store(0, Ordering::Relaxed);
+    SCANNING_IN_PROGRESS.store(false, Ordering::SeqCst);
+    HEALTH_CHECK_IN_PROGRESS.store(false, Ordering::SeqCst);
+    SCAN_CANCEL_REQUESTED.store(false, Ordering::SeqCst);
+    tracing::info!("Reset all scan state (last scan time, scanning flags)");
 }
 
 /// Request cancellation of the current scan

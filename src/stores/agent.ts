@@ -225,8 +225,12 @@ export const useAgentStore = defineStore('agent', () => {
   async function logout() {
     try {
       await invoke('logout')
+      // Clear all local state so reconnecting starts with a clean slate
       status.value = { authenticated: false }
       devices.value = []
+      scanning.value = false
+      scanProgress.value = null
+      healthCheckProgress.value = null
     } catch (error) {
       console.error('Logout failed:', error)
       throw error

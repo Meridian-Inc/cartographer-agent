@@ -78,9 +78,16 @@ pub fn is_elevated() -> bool {
 
 #[cfg(target_os = "windows")]
 fn is_elevated_windows() -> bool {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
 
-    match Command::new("whoami").args(["/groups"]).output() {
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    match Command::new("whoami")
+        .args(["/groups"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
         Ok(output) => {
             let output_str = String::from_utf8_lossy(&output.stdout);
             output_str.contains("S-1-16-12288") || output_str.contains("High Mandatory Level")

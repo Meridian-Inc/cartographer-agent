@@ -85,11 +85,18 @@ pub fn is_elevated() -> bool {
 
 #[cfg(target_os = "windows")]
 fn is_elevated_windows() -> bool {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     // Try to query the admin status using whoami /groups
     // If the S-1-16-12288 SID (High Mandatory Level) is present, we're elevated
-    match Command::new("whoami").args(["/groups"]).output() {
+    match Command::new("whoami")
+        .args(["/groups"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
         Ok(output) => {
             let output_str = String::from_utf8_lossy(&output.stdout);
             // Check for high integrity level (admin)

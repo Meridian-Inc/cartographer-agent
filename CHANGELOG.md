@@ -5,6 +5,13 @@ All notable changes to Cartographer Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+### [2.10.1](https://github.com/Meridian-Inc/cartographer-agent/compare/v2.10.0...v2.10.1) (2026-02-10)
+
+
+### 🐛 Bug Fixes
+
+* agent terminal flicker ([70bc7cf](https://github.com/Meridian-Inc/cartographer-agent/commit/70bc7cff48d6719e5c2891ee2506e61c4d19c900))
+
 ## [2.10.0](https://github.com/Meridian-Inc/cartographer-agent/compare/v2.9.4...v2.10.0) (2026-02-10)
 
 

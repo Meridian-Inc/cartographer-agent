@@ -110,6 +110,40 @@ const errorMessage = ref('')
 const verificationUrl = ref('')
 let loginCancelled = false
 
+function extractErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+
+  if (typeof error === 'string') {
+    return error
+  }
+
+  if (error && typeof error === 'object') {
+    const maybeMessage = (error as { message?: unknown }).message
+    if (typeof maybeMessage === 'string') {
+      return maybeMessage
+    }
+
+    const maybeError = (error as { error?: unknown }).error
+    if (typeof maybeError === 'string') {
+      return maybeError
+    }
+
+    try {
+      return JSON.stringify(error)
+    } catch {
+      return 'Unknown error'
+    }
+  }
+
+  if (error === null || error === undefined) {
+    return 'Unknown error'
+  }
+
+  return String(error)
+}
+
 onMounted(async () => {
   console.log('Setup.vue: Component mounted')
 })
@@ -139,6 +173,7 @@ async function handleLogin() {
   errorMessage.value = ''
   verificationUrl.value = ''
   loginCancelled = false
+  let loginStage = 'requesting connection link'
 
   try {
     // Step 1: Request login URL - this returns immediately with the URL
@@ -154,6 +189,7 @@ async function handleLogin() {
     console.log('Setup.vue: Got verification URL:', loginInfo.verificationUrl)
 
     // Step 2: Poll for login completion (this blocks until user completes auth)
+    loginStage = 'waiting for authorization'
     const success = await agentStore.completeLogin(
       loginInfo.deviceCode,
       loginInfo.expiresIn,
@@ -172,11 +208,11 @@ async function handleLogin() {
       return
     }
     console.error('Login error:', error)
-    const msg = error instanceof Error ? error.message : 'Unknown error'
+    const msg = extractErrorMessage(error)
     if (msg.includes('expired')) {
       errorMessage.value = 'Connection timed out. Please try again.'
     } else {
-      errorMessage.value = `Failed to connect: ${msg}`
+      errorMessage.value = `Failed to connect while ${loginStage}: ${msg}`
     }
   } finally {
     loggingIn.value = false

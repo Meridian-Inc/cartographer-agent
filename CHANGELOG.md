@@ -5,6 +5,13 @@ All notable changes to Cartographer Agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.0](https://github.com/Meridian-Inc/cartographer-agent/compare/v2.13.1...v2.14.0) (2026-02-24)
+
+
+### ✨ Features
+
+* add health poll interval ([d02d00b](https://github.com/Meridian-Inc/cartographer-agent/commit/d02d00b180087d12eade9b735da9f6446fba998d))
+
 ### [2.13.1](https://github.com/Meridian-Inc/cartographer-agent/compare/v2.12.0...v2.13.1) (2026-02-23)
 
 

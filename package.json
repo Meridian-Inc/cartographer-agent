@@ -55,7 +55,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Meridian-Inc/cartographer-agent.git"
+    "url": "https://github.com/Stratiform-Networking/cartographer-agent.git"
   },
   "license": "MIT"
 }

@@ -330,7 +330,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          REPO="Meridian-Inc/cartographer-agent"
+          REPO="Stratiform-Networking/cartographer-agent"
           BASE_URL="https://github.com/${REPO}/releases/download/v${VERSION}"
           
           # Get release notes
